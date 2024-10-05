@@ -1,0 +1,2551 @@
+
+// Filename: app/api/analytics/summary/route.ts
+// File: app/api/analytics/summary/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { getGA4AnalyticsSummary } from '@/lib/googleAnalytics';
+import { getWebsiteById } from '@/models';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const { searchParams } = new URL(request.url);
+  const websiteId = searchParams.get('websiteId');
+
+  if (!websiteId) {
+    throw new ValidationError('Website ID is required');
+  }
+
+  const { website } = await getWebsiteById(parseInt(websiteId));
+
+  if (!website) {
+    throw new NotFoundError('Website not found');
+  }
+
+  if (!website.ga4_property_id || !website.ga4_data_stream_id) {
+    throw new ValidationError('Google Analytics 4 Property ID or Data Stream ID not set for this website');
+  }
+
+  const analyticsData = await getGA4AnalyticsSummary(website.ga4_property_id, website.ga4_data_stream_id, session.user.id);
+
+  return NextResponse.json(analyticsData);
+});
+
+
+// Filename: app/api/auth/[...nextauth]/route.ts
+import NextAuth, { AuthOptions } from 'next-auth';
+import GoogleProvider from 'next-auth/providers/google';
+import { getUserByEmail, createUser, updateUser } from '@/models';
+import { fetchAndStoreWebsites } from '@/lib/googleSearchConsole';
+import CONFIG from '@/config';
+
+export const authOptions: AuthOptions = {
+  providers: [
+    GoogleProvider({
+      clientId: CONFIG.google.clientId as string,
+      clientSecret: CONFIG.google.clientSecret as string,
+      authorization: {
+        params: {
+          scope: 'openid email profile https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly',
+          access_type: 'offline',
+          prompt: 'consent',
+        }
+      }
+    }),
+  ],
+  callbacks: {
+    async signIn({ user, account }) {
+      if (account?.provider === "google" && user.email) {
+        try {
+          const expiresAt = account.expires_at 
+            ? new Date(account.expires_at * 1000).toISOString()
+            : new Date(Date.now() + 3600 * 1000).toISOString(); // Default to 1 hour from now if expires_at is not provided
+
+          const { user: dbUser } = await getUserByEmail(user.email);
+          if (dbUser) {
+            await updateUser(dbUser.id, {
+              name: user.name,
+              google_id: user.id,
+              access_token: account.access_token,
+              refresh_token: account.refresh_token,
+              expires_at: expiresAt
+            });
+            user.id = dbUser.id;
+          } else {
+            const newUser = await createUser({
+              name: user.name,
+              email: user.email,
+              google_id: user.id,
+              access_token: account.access_token,
+              refresh_token: account.refresh_token,
+              expires_at: expiresAt
+            });
+            user.id = newUser.user.id;
+
+            // Fetch and store websites for new users
+            await fetchAndStoreWebsites(user.id, account.access_token);
+          }
+          return true;
+
+        } catch (error) {
+          console.error('Error saving user to database:', error);
+          return false;
+        }
+      }
+      return true;
+    },
+    async session({ session, token }) {
+      if (session?.user && token.sub) {
+        session.user.id = token.sub;
+      }
+      return session;
+    },
+    async jwt({ token, account, user }) {
+      if (account && user) {
+        token.userId = user.id;
+      }
+      return token;
+    },
+  },
+  pages: {
+    signIn: '/auth/signin',
+  },
+  session: {
+    strategy: 'jwt',
+  },
+};
+
+const handler = NextAuth(authOptions);
+export { handler as GET, handler as POST };
+
+// Filename: app/api/gsc/data/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getGSCData } from '@/lib/googleSearchConsole';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user?.id) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const gscData = await getGSCData(session.user.id);
+  return NextResponse.json(gscData);
+});
+
+// Filename: app/api/websites/[websiteId]/indexing-stats/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getWebsitesByUserId, getWebsiteIndexingStats, startIndexingJob } from '@/models';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
+
+  if (isNaN(websiteId)) {
+    throw new ValidationError('Invalid website ID');
+  }
+
+  // Check if the website belongs to the current user
+  const { websites } = await getWebsitesByUserId(session.user.id);
+  const website = websites.find(w => w.id === websiteId);
+
+  if (!website) {
+    throw new NotFoundError('Website not found');
+  }
+
+  const { stats } = await getWebsiteIndexingStats(websiteId);
+
+  // Trigger a new indexing job if there are pages to be indexed
+  if (stats.not_indexed_pages > 0) {
+    await startIndexingJob(websiteId, 100); // Process 100 pages per job
+  }
+
+  return NextResponse.json({ stats });
+});
+
+// Filename: app/api/websites/[websiteId]/pages/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getPagesByWebsiteId, getWebsitesByUserId } from '@/models';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
+
+  if (isNaN(websiteId)) {
+    throw new ValidationError('Invalid website ID');
+  }
+
+  // Check if the website belongs to the current user
+  const { websites } = await getWebsitesByUserId(session.user.id);
+  const website = websites.find(w => w.id === websiteId);
+
+  if (!website) {
+    throw new NotFoundError('Website not found');
+  }
+
+  const { pages } = await getPagesByWebsiteId(websiteId);
+  return NextResponse.json({ pages });
+});
+
+// Filename: app/api/websites/[websiteId]/toggle-indexing/route.ts
+// app/api/websites/[websiteId]/toggle-indexing/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getWebsiteById, updateWebsite } from '@/models';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
+import jobQueue from '@/lib/jobQueue';
+
+export const POST = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.url.split('/').slice(-2)[0]);
+
+  if (isNaN(websiteId)) {
+    throw new ValidationError('Invalid website ID');
+  }
+
+  const { website } = await getWebsiteById(websiteId);
+  if (!website) {
+    throw new NotFoundError('Website not found');
+  }
+
+  if (website.user_id !== parseInt(session.user.id)) {
+    throw new AuthenticationError('You do not have permission to modify this website');
+  }
+
+  const body = await request.json();
+  const { enabled } = body;
+
+  if (typeof enabled !== 'boolean') {
+    throw new ValidationError('Invalid input: enabled must be a boolean');
+  }
+
+  const { website: updatedWebsite } = await updateWebsite(websiteId, { indexing_enabled: enabled });
+
+  let message = '';
+  if (enabled) {
+    await jobQueue.addJob(websiteId);
+    message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
+  } else {
+    message = 'Auto-indexing disabled.';
+  }
+
+  return NextResponse.json({ website: updatedWebsite, message });
+});
+
+// Filename: app/api/websites/refresh/route.ts
+// File: app/api/websites/refresh/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { fetchAndStoreWebsites } from '@/lib/googleSearchConsole';
+import { getValidAccessToken } from '@/lib/tokenManager';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError } from '@/utils/errors';
+
+export const POST = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user?.id) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const userId = parseInt(session.user.id);
+  const accessToken = await getValidAccessToken(userId);
+
+  await fetchAndStoreWebsites(userId, accessToken);
+
+  return NextResponse.json({ message: 'Websites refreshed successfully' });
+});
+
+// Filename: app/api/websites/route.ts
+// api/websites/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getWebsitesByUserId } from '@/models';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const userId = parseInt(session.user.id);
+  const { websites } = await getWebsitesByUserId(userId);
+
+  return NextResponse.json(websites);
+});
+
+// Filename: app/auth/signin/page.tsx
+// File: app/auth/signin/page.tsx
+'use client';
+
+import { Box, Typography, Button } from '@mui/material';
+import Image from "next/image";
+import { signIn } from 'next-auth/react';
+import { Google as GoogleIcon } from '@mui/icons-material';
+import { useRouter } from 'next/navigation';
+
+export default function LoginPage() {
+  const router = useRouter();
+
+  return (
+    <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center' }}>
+      {/* Left side with image */}
+      <Box sx={{ flex: 1, position: 'relative' }}>
+        <Image
+          src="/images/background.webp"
+          alt="Website Indexer"
+          priority
+          width={1024}
+          height={1300}
+        />
+      </Box>
+
+      {/* Right side with login form */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', p: 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Website Indexer
+        </Typography>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Inicia sesión o regístrate
+        </Typography>
+
+        <Box sx={{ mt: 4, width: '100%', maxWidth: 300 }}>
+          <Button
+            fullWidth
+            variant="contained"
+            color="primary"
+            startIcon={<GoogleIcon />}
+            onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
+            sx={{ mb: 2 }}
+          >
+            Continúa con Google
+          </Button>
+
+          <Typography variant="body2" align="center" sx={{ mt: 2 }}>
+            Al continuar, aceptas nuestros{' '}
+            <a href="/terms" style={{ color: 'blue' }}>Términos de uso</a> y nuestra{' '}
+            <a href="/privacy" style={{ color: 'blue' }}>Política de privacidad</a>
+          </Typography>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+// Filename: app/dashboard/page.tsx
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { Container, Typography, Box, CircularProgress, Snackbar } from '@mui/material';
+import WebsiteList from '@/components/WebsiteList';
+import { withAuth } from '@/components/withAuth';
+import { Website } from '@/types';
+import { useError } from '@/lib/useError';
+
+const Dashboard: React.FC = () => {
+  const [websites, setWebsites] = useState<Website[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const setError = useError();
+
+  useEffect(() => {
+    fetchWebsites();
+  }, []);
+
+  const fetchWebsites = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/websites');
+      if (!response.ok) {
+        throw new Error('Failed to fetch websites');
+      }
+      const data = await response.json();
+      setWebsites(data);
+    } catch (error) {
+      console.error('Error fetching websites:', error);
+      setError('Failed to load websites. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleIndexing = async (websiteId: number, currentStatus: boolean) => {
+    try {
+      const response = await fetch(`/api/websites/${websiteId}/toggle-indexing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: !currentStatus }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to toggle indexing');
+      }
+      const data = await response.json();
+      setWebsites(prevWebsites => 
+        prevWebsites?.map(website => 
+          website.id === websiteId ? { ...website, indexing_enabled: !currentStatus } : website
+        ) || null
+      );
+      setMessage(data.message);
+    } catch (error) {
+      console.error('Error toggling indexing:', error);
+      setError('Failed to update indexing status. Please try again later.');
+    }
+  };
+
+  const handleRefresh = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/websites/refresh', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error('Failed to refresh websites');
+      }
+      await fetchWebsites();
+      setMessage('Websites refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing websites:', error);
+      setError('Failed to refresh websites. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  return (
+    <Container sx={{ mt: 4 }}>
+      <Typography variant="h4" component="h1" gutterBottom>
+        Website Indexer Dashboard
+      </Typography>
+      {websites && (
+        <WebsiteList 
+          websites={websites} 
+          onToggleIndexing={handleToggleIndexing}
+          onRefresh={handleRefresh}
+        />
+      )}
+      <Snackbar
+        open={!!message}
+        autoHideDuration={6000}
+        onClose={() => setMessage(null)}
+        message={message}
+      />
+    </Container>
+  );
+};
+
+export default withAuth(Dashboard);
+
+// Filename: app/globals.css
+/* global.css */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --max-width: 1100px;
+  --border-radius: 12px;
+  --font-mono: ui-monospace, Menlo, Monaco, 'Cascadia Mono', 'Segoe UI Mono',
+    'Roboto Mono', 'Oxygen Mono', 'Ubuntu Monospace', 'Source Code Pro',
+    'Fira Mono', 'Droid Sans Mono', 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  font-family: 'Inter', sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Custom scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+
+// Filename: app/layout.tsx
+'use client';
+
+import React, { useState } from 'react';
+import { SessionProvider } from 'next-auth/react';
+import { ThemeProvider } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import Navigation from '@/components/Navigation';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import ErrorHandler from '@/components/ErrorHandler';
+import { usePathname } from 'next/navigation';
+import theme from '@/lib/theme';
+import { ErrorContext } from '@/lib/ErrorContext';
+
+export interface RootLayoutProps {
+  children: React.ReactNode;
+}
+
+export default function RootLayout({ children }: RootLayoutProps) {
+  const [error, setError] = useState<string | null>(null);
+  const pathname = usePathname();
+  const isSignInPage = pathname === '/auth/signin';
+
+  const handleCloseError = () => {
+    setError(null);
+  };
+
+  return (
+    <html lang="en">
+      <body>
+        <SessionProvider>
+          <ThemeProvider theme={theme}>
+            <CssBaseline />
+            <ErrorContext.Provider value={{ setError }}>
+              <ErrorBoundary>
+                {!isSignInPage && <Navigation />}
+                {children}
+                <ErrorHandler error={error} onClose={handleCloseError} />
+              </ErrorBoundary>
+            </ErrorContext.Provider>
+          </ThemeProvider>
+        </SessionProvider>
+      </body>
+    </html>
+  );
+}
+
+// Filename: app/page.tsx
+'use client';
+
+import React, { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import { CircularProgress } from '@mui/material';
+
+const HomeClient: React.FC = () => {
+  const { status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === 'authenticated') {
+      router.push('/dashboard');
+    } else if (status === 'unauthenticated') {
+      router.push('/auth/signin');
+    }
+  }, [status, router]);
+
+  if (status === 'loading') {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </div>
+    );
+  }
+
+  // Return null while waiting for redirect
+  return null;
+};
+
+export default HomeClient;
+
+// Filename: combine.js
+const fs = require('fs');
+const path = require('path');
+
+const outputFile = 'all-code.txt';
+const extensions = ['.js', '.ts', '.tsx', '.css', '.env'];   // file extensions to include
+const excludedDirs = ['node_modules', '.next'];              // Directories to exclude
+
+function combineFiles(dir) {
+  // Skip the directory if it's in the excluded list
+  if (excludedDirs.includes(path.basename(dir))) {
+    return;
+  }
+
+  fs.readdirSync(dir).forEach((file) => {
+    const fullPath = path.join(dir, file);
+    const stat = fs.statSync(fullPath);
+
+    if (stat.isDirectory()) {
+      combineFiles(fullPath);
+    } else if (extensions.includes(path.extname(fullPath))) {
+      // Get the relative path of the file
+      const relativePath = path.relative(__dirname, fullPath);
+
+      // Read the file content
+      let data = fs.readFileSync(fullPath, 'utf8');
+
+      // Add the path and filename as a comment in the first line
+      data = `// Filename: ${relativePath}\n${data}`;
+
+      // Add an empty line at the end of the file content
+      data = `${data}\n`;
+
+      // Append the modified data to the output file
+      fs.appendFileSync(outputFile, `\n${data}`);
+    }
+  });
+}
+
+// Clear the output file if it exists
+fs.writeFileSync(outputFile, '', 'utf8');
+
+// Start combining from the current directory
+combineFiles(__dirname);
+
+
+// Filename: components/AnalyticsSummary.tsx
+import React, { useState, useEffect } from 'react';
+import { Grid, Paper, Typography } from '@mui/material';
+
+interface AnalyticsData {
+  totalVisits: number;
+  averageSessionDuration: string;
+  bounceRate: string;
+}
+
+const AnalyticsSummary: React.FC = () => {
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+
+  useEffect(() => {
+    fetchAnalyticsData();
+  }, []);
+
+  const fetchAnalyticsData = async () => {
+    try {
+      const response = await fetch('/api/analytics/summary');
+      const data = await response.json();
+      setAnalyticsData(data);
+    } catch (error) {
+      console.error('Error fetching analytics data:', error);
+    }
+  };
+
+  if (!analyticsData) {
+    return <Typography>Loading analytics data...</Typography>;
+  }
+
+  return (
+    <Grid container spacing={3}>
+      <Grid item xs={4}>
+        <Paper elevation={2} sx={{ p: 2, textAlign: 'center' }}>
+          <Typography variant="h6">{analyticsData.totalVisits}</Typography>
+          <Typography variant="body2">Total Visits</Typography>
+        </Paper>
+      </Grid>
+      <Grid item xs={4}>
+        <Paper elevation={2} sx={{ p: 2, textAlign: 'center' }}>
+          <Typography variant="h6">{analyticsData.averageSessionDuration}</Typography>
+          <Typography variant="body2">Avg. Session Duration</Typography>
+        </Paper>
+      </Grid>
+      <Grid item xs={4}>
+        <Paper elevation={2} sx={{ p: 2, textAlign: 'center' }}>
+          <Typography variant="h6">{analyticsData.bounceRate}%</Typography>
+          <Typography variant="body2">Bounce Rate</Typography>
+        </Paper>
+      </Grid>
+    </Grid>
+  );
+};
+
+export default AnalyticsSummary;
+
+// Filename: components/ErrorBoundary.tsx
+// File: components/ErrorBoundary.tsx
+import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { AppError } from '@/utils/errors';
+
+interface Props {
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<Props, State> {
+  public state: State = {
+    hasError: false,
+    error: null,
+  };
+
+  public static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Uncaught error:', error, errorInfo);
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div>
+          <h1>Something went wrong</h1>
+          <p>{this.state.error instanceof AppError ? this.state.error.message : 'An unexpected error occurred'}</p>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default ErrorBoundary;
+
+// Filename: components/ErrorHandler.tsx
+// components/ErrorHandler.tsx
+import React from 'react';
+import { Alert, AlertTitle, Snackbar } from '@mui/material';
+
+interface ErrorHandlerProps {
+  error: string | null;
+  onClose: () => void;
+}
+
+const ErrorHandler: React.FC<ErrorHandlerProps> = ({ error, onClose }) => {
+  return (
+    <Snackbar open={!!error} autoHideDuration={6000} onClose={onClose}>
+      <Alert onClose={onClose} severity="error" sx={{ width: '100%' }}>
+        <AlertTitle>Error</AlertTitle>
+        {error}
+      </Alert>
+    </Snackbar>
+  );
+};
+
+export default ErrorHandler;
+
+// Filename: components/IndexingProgress.tsx
+import React, { useState, useEffect } from 'react';
+import { Box, Typography, LinearProgress } from '@mui/material';
+
+interface IndexingStats {
+  totalPages: number;
+  indexedPages: number;
+}
+
+const IndexingProgress: React.FC = () => {
+  const [stats, setStats] = useState<IndexingStats>({ totalPages: 0, indexedPages: 0 });
+
+  useEffect(() => {
+    fetchIndexingStats();
+  }, []);
+
+  const fetchIndexingStats = async () => {
+    try {
+      const response = await fetch('/api/indexing/stats');
+      const data = await response.json();
+      setStats(data);
+    } catch (error) {
+      console.error('Error fetching indexing stats:', error);
+    }
+  };
+
+  const progress = stats.totalPages > 0 ? (stats.indexedPages / stats.totalPages) * 100 : 0;
+
+  return (
+    <Box>
+      <Typography variant="h6" gutterBottom>
+        Indexing Progress
+      </Typography>
+      <LinearProgress variant="determinate" value={progress} />
+      <Typography variant="body2" color="textSecondary">
+        {stats.indexedPages} / {stats.totalPages} pages indexed
+      </Typography>
+    </Box>
+  );
+};
+
+export default IndexingProgress;
+
+// Filename: components/Navigation.tsx
+// File: components/Navigation.tsx
+'use client';
+
+import { AppBar, Toolbar, Typography, Button } from '@mui/material';
+import { useSession, signIn, signOut } from 'next-auth/react';
+import Link from 'next/link';
+
+export default function Navigation() {
+  const { data: session } = useSession();
+
+  return (
+    <AppBar position="static">
+      <Toolbar>
+        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+          <Link href="/" passHref>
+            Website Indexer
+          </Link>
+        </Typography>
+        {session ? (
+          <>
+            <Typography variant="body1" sx={{ marginRight: 2 }}>
+              {session.user.name}
+            </Typography>
+            <Button color="inherit" onClick={() => signOut()}>
+              Logout
+            </Button>
+          </>
+        ) : (
+          <Button color="inherit" onClick={() => signIn()}>
+            Login
+          </Button>
+        )}
+      </Toolbar>
+    </AppBar>
+  );
+}
+
+// Filename: components/WebsiteList.tsx
+import React from 'react';
+import { 
+  List, 
+  ListItem, 
+  ListItemText, 
+  ListItemSecondaryAction, 
+  Switch, 
+  Typography, 
+  Button 
+} from '@mui/material';
+import { Refresh as RefreshIcon } from '@mui/icons-material';
+import { Website } from '@/types';
+
+interface WebsiteListProps {
+  websites: Website[];
+  onToggleIndexing: (websiteId: number, currentStatus: boolean) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}
+
+const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, onRefresh }) => {
+  const handleToggle = async (websiteId: number, currentStatus: boolean) => {
+    await onToggleIndexing(websiteId, currentStatus);
+  };
+
+  return (
+    <>
+      <Button
+        startIcon={<RefreshIcon />}
+        onClick={onRefresh}
+        variant="outlined"
+        style={{ marginBottom: '1rem' }}
+      >
+        Refresh from Search Console
+      </Button>
+      <List>
+        {websites.map((website) => (
+          <ListItem key={website.id}>
+            <ListItemText 
+              primary={website.domain}
+              secondary={`Last scanned: ${new Date(website.last_robots_scan || '').toLocaleString()}`}
+            />
+            <ListItemSecondaryAction>
+              <Switch
+                edge="end"
+                onChange={() => handleToggle(website.id, website.indexing_enabled)}
+                checked={website.indexing_enabled}
+              />
+            </ListItemSecondaryAction>
+          </ListItem>
+        ))}
+        {websites.length === 0 && (
+          <Typography variant="body2" color="textSecondary" align="center">
+            No websites found. Click 'Refresh from Search Console' to fetch your properties.
+          </Typography>
+        )}
+      </List>
+    </>
+  );
+};
+
+export default WebsiteList;
+
+// Filename: components/withAuth.tsx
+// components/withAuth.tsx
+'use client';
+
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import { CircularProgress } from '@mui/material';
+
+export function withAuth<P extends object>(WrappedComponent: React.ComponentType<P>) {
+  return function WithAuth(props: P) {
+    const { data: session, status } = useSession();
+    const router = useRouter();
+
+    useEffect(() => {
+      if (status === 'loading') return; // Do nothing while loading
+      if (!session) {
+        router.push('/auth/signin');
+      }
+    }, [session, status, router]);
+
+    if (status === 'loading') {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+          <CircularProgress />
+        </div>
+      );
+    }
+
+    // If authenticated, render the wrapped component
+    if (status === "authenticated") {
+      return <WrappedComponent {...props} />;
+    }
+    
+    return null;
+  };
+}
+
+
+// Filename: config/index.ts
+// File: config/index.ts
+
+import { config } from 'dotenv';
+
+// Load environment variables from .env file
+config();
+
+const CONFIG = {
+  database: {
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    name: process.env.DB_NAME,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+  },
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    clientEmail: process.env.GOOGLE_CLIENT_EMAIL,
+    privateKey: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  },
+  nextAuth: {
+    url: process.env.NEXTAUTH_URL,
+    secret: process.env.NEXTAUTH_SECRET,
+  },
+};
+
+export default CONFIG;
+
+// Filename: lib/ErrorContext.ts
+// lib/ErrorContext.ts
+import { createContext } from 'react';
+
+interface ErrorContextType {
+  setError: (error: string | null) => void;
+}
+
+export const ErrorContext = createContext<ErrorContextType>({
+  setError: () => {},
+});
+
+// Filename: lib/db.ts
+import { Pool } from 'pg';
+import CONFIG from '@/config';
+
+const pool = new Pool({
+  host: CONFIG.database.host,
+  port: CONFIG.database.port,
+  database: CONFIG.database.name,
+  user: CONFIG.database.user,
+  password: CONFIG.database.password,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+export default pool;
+
+// Filename: lib/googleAnalytics.ts
+// lib/googleAnalytics.ts
+import { BetaAnalyticsDataClient } from '@google-analytics/data';
+import { getValidAccessToken, updateTokenExpiration } from './tokenManager';
+import { AuthorizationError } from '@/utils/errors';
+
+export async function getGA4AnalyticsSummary(propertyId: string, dataStreamId: string, userId: number) {
+  try {
+    const accessToken = await getValidAccessToken(userId);
+
+    const analyticsDataClient = new BetaAnalyticsDataClient({
+      auth: {
+        getClient: () => ({
+          getAccessToken: async () => accessToken,
+        }),
+      },
+    });
+
+    const [response] = await analyticsDataClient.runReport({
+      property: `properties/${propertyId}`,
+      dateRanges: [
+        {
+          startDate: '30daysAgo',
+          endDate: 'today',
+        },
+      ],
+      metrics: [
+        { name: 'screenPageViews' },
+        { name: 'averageSessionDuration' },
+        { name: 'bounceRate' },
+      ],
+    });
+
+    return {
+      totalVisits: response.rows[0].metricValues[0].value,
+      averageSessionDuration: response.rows[0].metricValues[1].value,
+      bounceRate: response.rows[0].metricValues[2].value,
+    };
+  } catch (error) {
+    if (error.code === 401 || error.code === 403) {
+      throw new AuthorizationError('Google Analytics access revoked. Please re-authorize.');
+    }
+    throw error;
+  }
+}
+
+// Filename: lib/googleSearchConsole.ts
+// File: lib/googleSearchConsole.ts
+import { google } from 'googleapis';
+import { OAuth2Client } from 'google-auth-library';
+import { getWebsitesByUserId, createWebsite, updateWebsite } from '@/models';
+import CONFIG from '@/config';
+import { Website } from '@/types';
+
+const oauth2Client = new OAuth2Client(
+  CONFIG.google.clientId,
+  CONFIG.google.clientSecret
+);
+
+function cleanDomain(inputDomain: string): string {
+  let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
+  try {
+    const url = new URL(cleanedDomain);
+    cleanedDomain = url.hostname;
+  } catch {
+    // If it's not a valid URL, assume it's already just a domain
+  }
+  cleanedDomain = cleanedDomain.replace(/^www\./, '');
+  return cleanedDomain;
+}
+
+export async function fetchAndStoreWebsites(userId: number, accessToken: string) {
+  try {
+    oauth2Client.setCredentials({
+      access_token: accessToken,
+    });
+
+    const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
+    const analytics = google.analytics({ version: 'v3', auth: oauth2Client });
+
+    const sites = await searchconsole.sites.list();
+    const { websites: existingWebsites } = await getWebsitesByUserId(userId);
+
+    const updatedWebsites = new Set<string>();
+
+    if (sites.data.siteEntry) {
+      for (const site of sites.data.siteEntry) {
+        const domain = cleanDomain(site.siteUrl);
+        const ga4Data = await fetchGA4Data(analytics, domain);
+
+        const existingWebsite = existingWebsites.find(w => w.domain === domain);
+
+        if (existingWebsite) {
+          await updateWebsite(existingWebsite.id, {
+            ga4_property_id: ga4Data.propertyId,
+            ga4_data_stream_id: ga4Data.dataStreamId,
+            indexing_enabled: existingWebsite.indexing_enabled, // Preserve existing indexing status
+          });
+        } else {
+          await createWebsite({
+            user_id: userId,
+            domain: domain,
+            indexing_enabled: false, // New websites are set to false by default
+            ga4_property_id: ga4Data.propertyId,
+            ga4_data_stream_id: ga4Data.dataStreamId,
+          });
+        }
+
+        updatedWebsites.add(domain);
+      }
+    }
+
+    // For websites no longer in Google Search Console, we set indexing_enabled to false
+    for (const existingWebsite of existingWebsites) {
+      if (!updatedWebsites.has(existingWebsite.domain)) {
+        await updateWebsite(existingWebsite.id, { indexing_enabled: false });
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching and storing websites:', error);
+    throw error;
+  }
+}
+
+async function fetchGA4Data(analytics: any, domain: string) {
+  try {
+    // First, get the GA4 property ID
+    const propertiesResponse = await analytics.management.accountSummaries.list();
+    const property = propertiesResponse.data.items
+      .flatMap((account: any) => account.webProperties)
+      .find((prop: any) => cleanDomain(prop.websiteUrl).includes(domain));
+
+    if (!property) {
+      return { propertyId: null, dataStreamId: null };
+    }
+
+    const propertyId = property.id;
+
+    // Then, get the data stream ID
+    const dataStreamsResponse = await analytics.management.webDataStreams.list({
+      parent: `properties/${propertyId}`,
+    });
+
+    const dataStream = dataStreamsResponse.data.webDataStreams
+      .find((stream: any) => cleanDomain(stream.displayName).includes(domain));
+
+    return {
+      propertyId: propertyId,
+      dataStreamId: dataStream ? dataStream.name.split('/').pop() : null,
+    };
+  } catch (error) {
+    console.error(`Error fetching GA4 data for ${domain}:`, error);
+    return { propertyId: null, dataStreamId: null };
+  }
+}
+
+// Filename: lib/jobQueue.ts
+// lib/jobQueue.ts
+
+import { processSingleWebsite } from '@/lib/sitemapProcessor';
+import { getWebsiteById } from '@/models';
+
+class JobQueue {
+  private queue: number[] = [];
+  private isProcessing: boolean = false;
+
+  async addJob(websiteId: number): Promise<void> {
+    if (typeof websiteId !== 'number') {
+      throw new Error('Invalid websiteId: must be a number');
+    }
+    this.queue.push(websiteId);
+    if (!this.isProcessing) {
+      this.processNextJob();
+    }
+  }
+
+  private async processNextJob(): Promise<void> {
+    if (this.queue.length === 0) {
+      this.isProcessing = false;
+      return;
+    }
+
+    this.isProcessing = true;
+    const websiteId = this.queue.shift();
+
+    if (websiteId !== undefined) {
+      try {
+        const { website } = await getWebsiteById(websiteId);
+        if (website) {
+          await processSingleWebsite(website);
+        } else {
+          console.error(`Website with id ${websiteId} not found`);
+        }
+      } catch (error) {
+        console.error(`Error processing website ${websiteId}:`, error);
+      }
+    }
+
+    setImmediate(() => this.processNextJob());
+  }
+}
+
+const jobQueue = new JobQueue();
+
+export default jobQueue;
+
+// Filename: lib/scheduler.ts
+// lib/scheduler.ts
+import cron from 'node-cron';
+import jobQueue from './jobQueue';
+import { getWebsitesForIndexing } from '@/models';
+
+export function scheduleIndexingJobs() {
+  // Run every day at midnight or adjust the cron schedule as per your need
+  cron.schedule('0 0 * * *', async () => {
+    try {
+      const websites = await getWebsitesForIndexing();
+      
+      for (const website of websites) {
+        // Enqueue website processing as a background job
+        await jobQueue.addJob({
+          type: 'processWebsite',
+          data: { websiteId: website.id }
+        });
+      }
+    } catch (error) {
+      console.error('Error in scheduled indexing job:', error);
+    }
+  });
+}
+
+
+// Filename: lib/sitemapProcessor.ts
+import axios from 'axios';
+import { parseString } from 'xml2js';
+import { promisify } from 'util';
+import jobQueue from '@/lib/jobQueue';
+import { 
+  getWebsitesForIndexing, 
+  addOrUpdatePagesFromSitemap, 
+  updateWebsiteRobotsScan, 
+  getWebsiteById 
+} from '@/models';
+import { Website } from '@/types';
+import { ValidationError } from '@/utils/errors';
+
+const parseXml = promisify(parseString);
+
+// Function to queue the website processing as background jobs
+export async function scheduleSitemapProcessing(): Promise<void> {
+  try {
+    const websites = await getWebsitesForIndexing();
+    for (const website of websites) {
+      await jobQueue.addJob(website.id);
+    }
+  } catch (error) {
+    console.error('Error in scheduled sitemap processing:', error);
+  }
+}
+
+// Function to process a single website, called as part of the background job
+export async function processSingleWebsite(website: Website): Promise<void> {
+  try {
+    const robotsTxtUrl = `https://${website.domain}/robots.txt`;
+    const robotsTxtContent = await fetchUrl(robotsTxtUrl);
+    const allSitemapUrls = extractSitemapUrls(robotsTxtContent);
+    const filteredSitemapUrls = filterSitemaps(allSitemapUrls);
+
+    let totalPages = 0;
+    for (const sitemapUrl of filteredSitemapUrls) {
+      const pageCount = await processSitemap(website.id, sitemapUrl);
+      totalPages += pageCount;
+    }
+
+    console.log(`Processed ${totalPages} pages for ${website.domain}`);
+    await updateWebsiteRobotsScan(website.id);
+  } catch (error) {
+    console.error(`Error processing website ${website.domain}:`, error);
+  }
+}
+
+// Function to filter sitemaps based on their names
+function filterSitemaps(sitemapUrls: string[]): string[] {
+  const includePatterns = [
+    /post-sitemap/,
+    /page-sitemap/,
+    /product-sitemap/,
+    /^sitemap[-_]?index/,
+    /^sitemap[-_]?pages/,
+    /^sitemap[-_]?posts/,
+    /^sitemap[-_]?products/
+  ];
+
+  const excludePatterns = [
+    /category-sitemap/,
+    /tag-sitemap/,
+    /author-sitemap/,
+    /^sitemap[-_]?category/,
+    /^sitemap[-_]?tag/,
+    /^sitemap[-_]?author/,
+    /^sitemap[-_]?archive/
+  ];
+
+  return sitemapUrls.filter(url => {
+    const sitemapName = new URL(url).pathname.split('/').pop() || '';
+    
+    if (excludePatterns.some(pattern => pattern.test(sitemapName))) {
+      return false;
+    }
+
+    return includePatterns.some(pattern => pattern.test(sitemapName)) || sitemapName === 'sitemap.xml';
+  });
+}
+
+// Function to process a single sitemap and extract URLs
+async function processSitemap(websiteId: number, sitemapUrl: string): Promise<number> {
+  try {
+    const sitemapContent = await fetchUrl(sitemapUrl);
+    const pages = await parseSitemap(sitemapContent);
+    await addOrUpdatePagesFromSitemap(websiteId, pages);
+    return pages.length;
+  } catch (error) {
+    console.error(`Error processing sitemap ${sitemapUrl}:`, error);
+    return 0;
+  }
+}
+
+// Function to parse the sitemap XML and extract URLs
+async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> {
+  try {
+    const result = await parseXml(sitemapContent);
+    if (result.sitemapindex) {
+      // Sitemap index file containing multiple sitemaps
+      const sitemapUrls = result.sitemapindex.sitemap.map((sitemap: any) => sitemap.loc[0]);
+      const filteredSitemapUrls = filterSitemaps(sitemapUrls);
+      const allPages = await Promise.all(filteredSitemapUrls.map(fetchAndParseSitemap));
+      return allPages.flat();
+    } else if (result.urlset) {
+      // Regular sitemap containing URLs
+      return result.urlset.url.map((url: any) => ({ url: url.loc[0] }));
+    } else {
+      throw new ValidationError('Invalid sitemap format');
+    }
+  } catch (error) {
+    console.error('Error parsing sitemap:', error);
+    throw new ValidationError('Failed to parse sitemap');
+  }
+}
+
+// Helper function to fetch and parse a sitemap from a given URL
+async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string }[]> {
+  const sitemapContent = await fetchUrl(sitemapUrl);
+  return parseSitemap(sitemapContent);
+}
+
+// Function to fetch URL content (robots.txt, sitemap.xml, etc.)
+async function fetchUrl(url: string): Promise<string> {
+  try {
+    const response = await axios.get(url);
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching URL ${url}:`, error);
+    throw new ValidationError(`Failed to fetch URL: ${url}`);
+  }
+}
+
+// Function to extract sitemap URLs from robots.txt
+function extractSitemapUrls(robotsTxtContent: string): string[] {
+  const lines = robotsTxtContent.split('\n');
+  return lines
+    .filter(line => line.toLowerCase().startsWith('sitemap:'))
+    .map(line => line.split(': ')[1].trim());
+}
+
+
+// Filename: lib/theme.ts
+// lib/theme.ts
+import { createTheme, responsiveFontSizes } from '@mui/material/styles';
+import { deepmerge } from '@mui/utils';
+
+declare module '@mui/material/styles' {
+  interface Palette {
+    customBackground: Palette['primary'];
+    customText: Palette['primary'];
+  }
+  interface PaletteOptions {
+    customBackground?: PaletteOptions['primary'];
+    customText?: PaletteOptions['primary'];
+  }
+}
+
+// Create a base theme
+const baseTheme = createTheme({
+  palette: {
+    primary: {
+      main: '#0f766e',
+      light: '#14b8a6',
+      dark: '#0d5b54',
+      contrastText: '#ffffff',
+    },
+    secondary: {
+      main: '#0ea5e9',
+      light: '#38bdf8',
+      dark: '#0284c7',
+      contrastText: '#ffffff',
+    },
+    error: {
+      main: '#ef4444',
+      light: '#f87171',
+      dark: '#dc2626',
+      contrastText: '#ffffff',
+    },
+    warning: {
+      main: '#f59e0b',
+      light: '#fbbf24',
+      dark: '#d97706',
+      contrastText: '#000000',
+    },
+    info: {
+      main: '#3b82f6',
+      light: '#60a5fa',
+      dark: '#2563eb',
+      contrastText: '#ffffff',
+    },
+    success: {
+      main: '#10b981',
+      light: '#34d399',
+      dark: '#059669',
+      contrastText: '#ffffff',
+    },
+    grey: {
+      50: '#f9fafb',
+      100: '#f3f4f6',
+      200: '#e5e7eb',
+      300: '#d1d5db',
+      400: '#9ca3af',
+      500: '#6b7280',
+      600: '#4b5563',
+      700: '#374151',
+      800: '#1f2937',
+      900: '#111827',
+    },
+    customBackground: {
+      main: '#ffffff',
+      light: '#f3f4f6',
+      dark: '#e5e7eb',
+    },
+    customText: {
+      main: '#111827',
+      light: '#374151',
+      dark: '#1f2937',
+    },
+    background: {
+      default: '#f3f4f6',
+      paper: '#ffffff',
+    },
+    text: {
+      primary: '#111827',
+      secondary: '#4b5563',
+    },
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    h1: {
+      fontSize: '2.5rem',
+      fontWeight: 700,
+      lineHeight: 1.2,
+    },
+    h2: {
+      fontSize: '2rem',
+      fontWeight: 700,
+      lineHeight: 1.2,
+    },
+    h3: {
+      fontSize: '1.75rem',
+      fontWeight: 600,
+      lineHeight: 1.2,
+    },
+    h4: {
+      fontSize: '1.5rem',
+      fontWeight: 600,
+      lineHeight: 1.2,
+    },
+    h5: {
+      fontSize: '1.25rem',
+      fontWeight: 600,
+      lineHeight: 1.2,
+    },
+    h6: {
+      fontSize: '1rem',
+      fontWeight: 600,
+      lineHeight: 1.2,
+    },
+    subtitle1: {
+      fontSize: '1rem',
+      fontWeight: 400,
+      lineHeight: 1.5,
+    },
+    subtitle2: {
+      fontSize: '0.875rem',
+      fontWeight: 500,
+      lineHeight: 1.57,
+    },
+    body1: {
+      fontSize: '1rem',
+      fontWeight: 400,
+      lineHeight: 1.5,
+    },
+    body2: {
+      fontSize: '0.875rem',
+      fontWeight: 400,
+      lineHeight: 1.43,
+    },
+    button: {
+      fontSize: '0.875rem',
+      fontWeight: 500,
+      lineHeight: 1.75,
+      textTransform: 'none',
+    },
+    caption: {
+      fontSize: '0.75rem',
+      fontWeight: 400,
+      lineHeight: 1.66,
+    },
+    overline: {
+      fontSize: '0.75rem',
+      fontWeight: 600,
+      lineHeight: 2.66,
+      textTransform: 'uppercase',
+    },
+  },
+  shape: {
+    borderRadius: 8,
+  },
+  mixins: {
+    toolbar: {
+      minHeight: 64,
+    },
+  },
+});
+
+// Customize the base theme
+const customTheme = deepmerge(baseTheme, {
+  components: {
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          backgroundColor: baseTheme.palette.background.paper,
+          color: baseTheme.palette.text.primary,
+          boxShadow: 'none',
+          borderBottom: `1px solid ${baseTheme.palette.grey[200]}`,
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          borderRadius: '0.375rem',
+          fontWeight: 600,
+          boxShadow: 'none',
+          '&:hover': {
+            boxShadow: 'none',
+          },
+        },
+        containedPrimary: {
+          '&:hover': {
+            backgroundColor: baseTheme.palette.primary.dark,
+          },
+        },
+        containedSecondary: {
+          '&:hover': {
+            backgroundColor: baseTheme.palette.secondary.dark,
+          },
+        },
+      },
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          borderRadius: '0.5rem',
+          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+        },
+      },
+    },
+    MuiCardHeader: {
+      styleOverrides: {
+        root: {
+          padding: baseTheme.spacing(3),
+        },
+      },
+    },
+    MuiCardContent: {
+      styleOverrides: {
+        root: {
+          padding: baseTheme.spacing(3),
+        },
+      },
+    },
+    MuiCardActions: {
+      styleOverrides: {
+        root: {
+          padding: baseTheme.spacing(3),
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          borderRadius: '0.375rem',
+        },
+      },
+    },
+    MuiDialog: {
+      styleOverrides: {
+        paper: {
+          borderRadius: '0.5rem',
+        },
+      },
+    },
+    MuiDivider: {
+      styleOverrides: {
+        root: {
+          borderColor: baseTheme.palette.grey[200],
+        },
+      },
+    },
+    MuiInputBase: {
+      styleOverrides: {
+        root: {
+          borderRadius: '0.375rem',
+        },
+      },
+    },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          '& .MuiOutlinedInput-notchedOutline': {
+            borderColor: baseTheme.palette.grey[300],
+          },
+          '&:hover .MuiOutlinedInput-notchedOutline': {
+            borderColor: baseTheme.palette.grey[400],
+          },
+          '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+            borderColor: baseTheme.palette.primary.main,
+          },
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+        },
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: {
+          borderBottom: `1px solid ${baseTheme.palette.grey[200]}`,
+        },
+      },
+    },
+    MuiTableHead: {
+      styleOverrides: {
+        root: {
+          backgroundColor: baseTheme.palette.grey[50],
+          '.MuiTableCell-root': {
+            color: baseTheme.palette.text.secondary,
+            fontWeight: 600,
+          },
+        },
+      },
+    },
+    MuiTooltip: {
+      styleOverrides: {
+        tooltip: {
+          backgroundColor: baseTheme.palette.grey[800],
+        },
+      },
+    },
+  },
+});
+
+// Make the theme responsive
+const theme = responsiveFontSizes(customTheme);
+
+export default theme;
+
+// Filename: lib/tokenManager.ts
+// File: lib/tokenManager.ts
+
+import { google } from 'googleapis';
+import { OAuth2Client } from 'google-auth-library';
+import { getUserTokens, updateUserTokens } from '@/models';
+import { UserTokens } from '@/types/index';
+import { TokenError, DatabaseError, AuthorizationError } from '@/utils/errors';
+import CONFIG from '@/config';
+
+const oauth2Client = new OAuth2Client(
+  CONFIG.google.clientId,
+  CONFIG.google.clientSecret
+);
+
+const TOKEN_EXPIRY_BUFFER = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+export async function getValidAccessToken(userId: number): Promise<string> {
+  try {
+    const tokens = await getUserTokens(userId);
+    if (!tokens) {
+      throw new TokenError('User tokens not found');
+    }
+
+    const { accessToken, refreshToken, expiresAt } = tokens;
+
+    if (!expiresAt) {
+      throw new TokenError('Token expiration time not set');
+    }
+
+    if (new Date(expiresAt).getTime() - Date.now() < TOKEN_EXPIRY_BUFFER) {
+      // Token is expired or close to expiring, refresh it
+      const newTokens = await refreshAccessToken(refreshToken);
+      await updateUserTokens(userId, newTokens.access_token, newTokens.refresh_token, newTokens.expires_at);
+      return newTokens.access_token;
+    }
+
+    return accessToken;
+  } catch (error) {
+    if (error instanceof TokenError) {
+      throw error;
+    } else if (error instanceof DatabaseError) {
+      console.error('Database error in getValidAccessToken:', error);
+      throw new TokenError('Failed to retrieve user tokens');
+    } else {
+      console.error('Unexpected error in getValidAccessToken:', error);
+      throw new TokenError('An unexpected error occurred while getting access token');
+    }
+  }
+}
+
+async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
+  try {
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+    const { tokens } = await oauth2Client.refreshAccessToken();
+    const accessToken = tokens.access_token!;
+    const expiresAt = new Date(Date.now() + (tokens.expiry_date! - Date.now())).toISOString();
+
+    return {
+      access_token: accessToken,
+      refresh_token: tokens.refresh_token || refreshToken, // Use the new refresh token if provided, otherwise keep the old one
+      expires_at: expiresAt,
+    };
+  } catch (error: any) {
+    console.error('Error refreshing access token:', error);
+    if (error.response && error.response.status === 400) {
+      throw new AuthorizationError('Invalid refresh token. User may need to re-authenticate.');
+    } else if (error.response && error.response.status === 401) {
+      throw new AuthorizationError('Refresh token has been revoked or expired. User needs to re-authenticate.');
+    } else {
+      throw new TokenError('Failed to refresh access token');
+    }
+  }
+}
+
+export async function updateTokenExpiration(userId: number, expiresIn: number): Promise<void> {
+  try {
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+    await updateUserTokens(userId, null, null, expiresAt);
+  } catch (error) {
+    console.error('Error updating token expiration:', error);
+    if (error instanceof DatabaseError) {
+      throw new TokenError('Failed to update token expiration in database');
+    } else {
+      throw new TokenError('An unexpected error occurred while updating token expiration');
+    }
+  }
+}
+
+export async function revokeToken(userId: number): Promise<void> {
+  try {
+    const tokens = await getUserTokens(userId);
+    if (!tokens || !tokens.accessToken) {
+      throw new TokenError('No valid token found for user');
+    }
+
+    await oauth2Client.revokeToken(tokens.accessToken);
+    await updateUserTokens(userId, null, null, null); // Clear tokens in database
+  } catch (error) {
+    console.error('Error revoking token:', error);
+    if (error instanceof TokenError) {
+      throw error;
+    } else if (error instanceof DatabaseError) {
+      throw new TokenError('Failed to update token information after revocation');
+    } else {
+      throw new TokenError('An unexpected error occurred while revoking token');
+    }
+  }
+}
+
+// Filename: lib/useError.ts
+// lib/useError.ts
+import { useContext } from 'react';
+import { ErrorContext } from './ErrorContext';
+
+export function useError() {
+  const { setError } = useContext(ErrorContext);
+  return setError;
+}
+
+// Filename: middleware/authMiddleware.ts
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { getToken } from 'next-auth/jwt';
+import { getValidAccessToken } from '@/lib/tokenManager';
+
+export async function middleware(request: NextRequest) {
+  const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
+
+  if (!token && !request.nextUrl.pathname.startsWith('/auth')) {
+    return NextResponse.redirect(new URL('/auth/signin', request.url));
+  }
+
+  try {
+    // The token should contain userId and potentially an access token
+    const userId = token.userId as number;
+
+    // Retrieve or refresh the Google OAuth access token
+    const validAccessToken = await getValidAccessToken(userId);
+
+    // Add the valid access token to the request headers
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('X-Access-Token', validAccessToken); // Adding Google OAuth token for API requests
+
+    // Create a new request with the updated headers
+    const response = NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
+
+    return response;
+  } catch (error) {
+    console.error('Error in token middleware:', error);
+
+    // Token-related errors should redirect the user to the sign-in page
+    const url = request.nextUrl.clone();
+    url.pathname = '/auth/signin';
+    return NextResponse.redirect(url);
+  }
+}
+
+// Only match requests that are not static files, API calls, or auth-related routes
+export const config = {
+  matcher: [
+    '/((?!api|_next/static|_next/image|favicon.ico|auth).*)',
+  ],
+};
+
+
+// Filename: middleware/errorHandler.ts
+// File: middleware/errorHandler.ts
+
+import { NextApiRequest, NextApiResponse } from 'next';
+import { AppError, createErrorResponse, getClientErrorMessage, DatabaseError, ValidationError, AuthenticationError, AuthorizationError, NotFoundError } from '@/utils/errors';
+
+export const errorHandler = (handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>) => {
+  return async (req: NextApiRequest, res: NextApiResponse): Promise<void> => {
+    try {
+      await handler(req, res);
+    } catch (error: any) {
+      console.error('Error:', error);
+
+      let appError: AppError;
+
+      if (error instanceof AppError) {
+        appError = error;
+      } else if (error instanceof Error) {
+        // Convert generic errors to AppError
+        appError = new AppError(error.message, 500, 'INTERNAL_SERVER_ERROR');
+      } else {
+        appError = new AppError('An unexpected error occurred', 500, 'INTERNAL_SERVER_ERROR');
+      }
+
+      const errorResponse = createErrorResponse(appError);
+      const clientMessage = getClientErrorMessage(appError);
+
+      // In production, we might want to hide the actual error message and only show the client-friendly message
+      if (process.env.NODE_ENV === 'production') {
+        errorResponse.message = clientMessage;
+      } else {
+        // In development, we can show both the original error and the client-friendly message
+        errorResponse.message = `${errorResponse.message} (Client message: ${clientMessage})`;
+      }
+
+      res.status(appError.statusCode).json(errorResponse);
+    }
+  };
+};
+
+export const withErrorHandling = <T>(handler: () => Promise<T>): Promise<T> => {
+  return handler().catch((error) => {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    if (error instanceof Error) {
+      // Convert known error types to specific AppError subclasses
+      if (error.name === 'DatabaseError') {
+        throw new DatabaseError(error.message);
+      }
+      if (error.name === 'ValidationError') {
+        throw new ValidationError(error.message);
+      }
+      if (error.name === 'AuthenticationError') {
+        throw new AuthenticationError(error.message);
+      }
+      if (error.name === 'AuthorizationError') {
+        throw new AuthorizationError(error.message);
+      }
+      if (error.name === 'NotFoundError') {
+        throw new NotFoundError(error.message);
+      }
+    }
+    // For unknown errors, throw a generic AppError
+    throw new AppError('An unexpected error occurred', 500, 'INTERNAL_SERVER_ERROR');
+  });
+};
+
+// Filename: models/index.ts
+// File: models/index.ts
+
+import pool from '../lib/db';
+import { Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, JobStatus } from '@/types';
+import { DatabaseError } from '@/utils/errors';
+
+// Helper function to handle database errors
+function handleDatabaseError(error: any): never {
+  console.error('Database error:', error);
+  if (error.code === '23505') { // unique_violation
+    throw new DatabaseError('Duplicate entry', 409);
+  } else if (error.code === '23503') { // foreign_key_violation
+    throw new DatabaseError('Related resource not found', 404);
+  } else {
+    throw new DatabaseError('Database error occurred', 500);
+  }
+}
+
+export async function getUserByEmail(email: string): Promise<{ user: User | null, statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM users WHERE email = $1';
+    const result = await pool.query(query, [email]);
+    return { user: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function createUser(user: Partial<User>): Promise<{ user: User, statusCode: number }> {
+  try {
+    const { name, email, google_id, access_token, refresh_token, expires_at } = user;
+    const query = 'INSERT INTO users (name, email, google_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *';
+    const result = await pool.query(query, [name, email, google_id, access_token, refresh_token, expires_at]);
+    return { user: result.rows[0], statusCode: 201 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateUser(id: number, user: Partial<User>): Promise<{ user: User, statusCode: number }> {
+  try {
+    const { name, google_id, access_token, refresh_token, expires_at } = user;
+    const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), access_token = COALESCE($3, access_token), refresh_token = COALESCE($4, refresh_token), expires_at = COALESCE($5, expires_at), updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *';
+    const result = await pool.query(query, [name, google_id, access_token, refresh_token, expires_at, id]);
+    if (result.rowCount === 0) {
+      throw new DatabaseError('User not found', 404);
+    }
+    return { user: result.rows[0], statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateUserTokens(userId: number, accessToken: string | null, refreshToken: string | null, expiresAt: string | null): Promise<void> {
+  try {
+    const query = `
+      UPDATE users
+      SET access_token = COALESCE($1, access_token),
+          refresh_token = COALESCE($2, refresh_token),
+          expires_at = COALESCE($3, expires_at),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4
+    `;
+    await pool.query(query, [accessToken, refreshToken, expiresAt, userId]);
+  } catch (error) {
+    console.error('Error updating user tokens:', error);
+    throw error;
+  }
+}
+
+export async function getUserTokens(userId: number): Promise<{ accessToken: string, refreshToken: string, expiresAt: string } | null> {
+  try {
+    const query = 'SELECT access_token, refresh_token, expires_at FROM users WHERE id = $1';
+    const result = await pool.query(query, [userId]);
+    if (result.rows.length > 0) {
+      return {
+        accessToken: result.rows[0].access_token,
+        refreshToken: result.rows[0].refresh_token,
+        expiresAt: result.rows[0].expires_at
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting user tokens:', error);
+    throw error;
+  }
+}
+
+export async function getWebsitesByUserId(userId: number): Promise<{ websites: Website[], statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM websites WHERE user_id = $1';
+    const result = await pool.query(query, [userId]);
+    return { websites: result.rows, statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getWebsiteById(id: number): Promise<{ website: Website | null, statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM websites WHERE id = $1';
+    const result = await pool.query(query, [id]);
+    return { website: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getWebsitesForIndexing(): Promise<{ websites: Website[], statusCode: number }> {
+  try {
+    const query = `
+      SELECT * FROM websites 
+      WHERE indexing_enabled = true 
+      AND (last_robots_scan IS NULL OR last_robots_scan < NOW() - INTERVAL '1 day')
+    `;
+    const result = await pool.query(query);
+    return { websites: result.rows, statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function createWebsite(website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
+  try {
+    const { user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id } = website;
+    const query = 'INSERT INTO websites (user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id) VALUES ($1, $2, $3, $4, $5) RETURNING *';
+    const result = await pool.query(query, [user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id]);
+    return { website: result.rows[0], statusCode: 201 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateWebsite(id: number, website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
+  try {
+    const { domain, indexing_enabled, ga4_property_id, ga4_data_stream_id } = website;
+    const query = `
+      UPDATE websites 
+      SET domain = COALESCE($1, domain), 
+          indexing_enabled = COALESCE($2, indexing_enabled),
+          ga4_property_id = COALESCE($3, ga4_property_id),
+          ga4_data_stream_id = COALESCE($4, ga4_data_stream_id),
+          updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $5 
+      RETURNING *
+    `;
+    const result = await pool.query(query, [domain, indexing_enabled, ga4_property_id, ga4_data_stream_id, id]);
+    if (result.rowCount === 0) {
+      throw new DatabaseError('Website not found', 404);
+    }
+    return { website: result.rows[0], statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateWebsiteRobotsScan(id: number): Promise<{ statusCode: number }> {
+  try {
+    const query = 'SELECT update_website_robots_scan($1)';
+    await pool.query(query, [id]);
+    return { statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getPagesByWebsiteId(websiteId: number): Promise<{ pages: Page[], statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM pages WHERE website_id = $1';
+    const result = await pool.query(query, [websiteId]);
+    return { pages: result.rows, statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function createPage(page: Partial<Page>): Promise<{ page: Page, statusCode: number }> {
+  try {
+    const { website_id, url } = page;
+    const query = 'INSERT INTO pages (website_id, url) VALUES ($1, $2) RETURNING *';
+    const result = await pool.query(query, [website_id, url]);
+    return { page: result.rows[0], statusCode: 201 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updatePageData(websiteId: number, url: string, indexingStatus: string, lastIndexed: Date | null): Promise<void> {
+  try {
+    const query = `
+      UPDATE pages
+      SET indexing_status = $1,
+          last_indexed_date = $2,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE website_id = $3 AND url = $4
+    `;
+    await pool.query(query, [indexingStatus, lastIndexed, websiteId, url]);
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getPagesForIndexing(websiteId: number, limit: number): Promise<{ pages: Page[], statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM get_pages_for_indexing($1, $2)';
+    const result = await pool.query(query, [websiteId, limit]);
+    return { pages: result.rows, statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function createIndexingJob(job: Partial<IndexingJob>): Promise<{ job: IndexingJob, statusCode: number }> {
+  try {
+    const { website_id, status, total_pages } = job;
+    const query = 'INSERT INTO indexing_jobs (website_id, status, started_at, total_pages, processed_pages) VALUES ($1, $2, CURRENT_TIMESTAMP, $3, 0) RETURNING *';
+    const result = await pool.query(query, [website_id, status, total_pages]);
+    return { job: result.rows[0], statusCode: 201 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateIndexingJob(id: number, job: Partial<IndexingJob>): Promise<{ job: IndexingJob, statusCode: number }> {
+  try {
+    const { status, processed_pages } = job;
+    const query = 'UPDATE indexing_jobs SET status = COALESCE($1, status), processed_pages = COALESCE($2, processed_pages), completed_at = CASE WHEN $1 = \'completed\' THEN CURRENT_TIMESTAMP ELSE completed_at END, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *';
+    const result = await pool.query(query, [status, processed_pages, id]);
+    if (result.rowCount === 0) {
+      throw new DatabaseError('Indexing job not found', 404);
+    }
+    return { job: result.rows[0], statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function createIndexingJobDetail(detail: Partial<IndexingJobDetail>): Promise<{ detail: IndexingJobDetail, statusCode: number }> {
+  try {
+    const { indexing_job_id, page_id, status } = detail;
+    const query = 'INSERT INTO indexing_job_details (indexing_job_id, page_id, status, submitted_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP) RETURNING *';
+    const result = await pool.query(query, [indexing_job_id, page_id, status]);
+    return { detail: result.rows[0], statusCode: 201 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateIndexingJobDetail(id: number, detail: Partial<IndexingJobDetail>): Promise<{ detail: IndexingJobDetail, statusCode: number }> {
+  try {
+    const { status, response } = detail;
+    const query = 'SELECT * FROM update_indexing_job_detail_status($1, $2, $3)';
+    const result = await pool.query(query, [id, status, response]);
+    if (result.rowCount === 0) {
+      throw new DatabaseError('Indexing job detail not found', 404);
+    }
+    return { detail: result.rows[0], statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function createEmailNotification(notification: Partial<EmailNotification>): Promise<{ notification: EmailNotification, statusCode: number }> {
+  try {
+    const { user_id, website_id, type, content } = notification;
+    const query = 'SELECT * FROM create_email_notification($1, $2, $3, $4)';
+    const result = await pool.query(query, [user_id, website_id, type, content]);
+    return { notification: result.rows[0], statusCode: 201 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getWebsiteIndexingStats(websiteId: number): Promise<{ stats: { total_pages: number, indexed_pages: number, pending_pages: number, not_indexed_pages: number }, statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM get_website_indexing_stats($1)';
+    const result = await pool.query(query, [websiteId]);
+    return { stats: result.rows[0], statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { url: string }[]): Promise<{ statusCode: number }> {
+  try {
+    const query = 'SELECT add_or_update_pages_from_sitemap($1, $2)';
+    await pool.query(query, [websiteId, JSON.stringify(pages)]);
+    return { statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function startIndexingJob(websiteId: number, batchSize: number): Promise<{ statusCode: number }> {
+  try {
+    const query = 'CALL start_indexing_job($1, $2)';
+    await pool.query(query, [websiteId, batchSize]);
+    return { statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+// Filename: next-env.d.ts
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/building-your-application/configuring/typescript for more information.
+
+
+// Filename: next.config.js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: '/api/:path*',
+      },
+    ]
+  },
+}
+
+module.exports = nextConfig
+
+// Filename: types/index.ts
+// File: types/index.ts
+
+export interface UserTokens {
+  access_token: string | null;
+  refresh_token: string | null;
+  expires_at: string | null;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  name: string | null;
+  google_id: string | null;
+  access_token: string | null;
+  refresh_token: string | null;
+  expires_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+  
+export interface Website {
+  id: number;
+  user_id: number;
+  domain: string;
+  last_robots_scan: Date | null;
+  indexing_enabled: boolean;
+  ga4_property_id: string | null;
+  ga4_data_stream_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface Page {
+  id: number;
+  website_id: number;
+  url: string;
+  last_sitemap_check: Date | null;
+  last_indexed_date: Date | null;
+  indexing_status: IndexingStatus;
+  created_at: Date;
+  updated_at: Date;
+}
+  
+export type IndexingStatus = 'not_indexed' | 'pending' | 'indexed' | 'failed';
+
+export interface IndexingJob {
+  id: number;
+  website_id: number;
+  status: JobStatus;
+  started_at: Date | null;
+  completed_at: Date | null;
+  total_pages: number;
+  processed_pages: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type JobStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface IndexingJobDetail {
+  id: number;
+  indexing_job_id: number;
+  page_id: number;
+  status: IndexingStatus;
+  submitted_at: Date | null;
+  response: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface EmailNotification {
+  id: number;
+  user_id: number;
+  website_id: number;
+  type: NotificationType;
+  content: string;
+  sent_at: Date | null;
+  created_at: Date;
+}
+
+export type NotificationType = 'indexing_complete' | 'indexing_failed' | 'new_page_found';
+
+
+// Filename: types/next-auth.d.ts
+import NextAuth from "next-auth"
+
+declare module "next-auth" {
+  interface Session {
+    user: {
+      id: string
+      name?: string | null
+      email?: string | null
+      image?: string | null
+    }
+  }
+}
+
+// Filename: utils/apiUtils.ts
+// File: utils/apiUtils.ts
+import { NextResponse } from 'next/server';
+import { AppError, DatabaseError, ValidationError, AuthenticationError, AuthorizationError, NotFoundError } from './errors';
+
+export async function handleApiError(error: unknown): Promise<NextResponse> {
+  console.error('API Error:', error);
+
+  let appError: AppError;
+
+  if (error instanceof AppError) {
+    appError = error;
+  } else if (error instanceof Error) {
+    // Convert known error types to specific AppError subclasses
+    if (error.name === 'DatabaseError') {
+      appError = new DatabaseError(error.message);
+    } else if (error.name === 'ValidationError') {
+      appError = new ValidationError(error.message);
+    } else if (error.name === 'AuthenticationError') {
+      appError = new AuthenticationError(error.message);
+    } else if (error.name === 'AuthorizationError') {
+      appError = new AuthorizationError(error.message);
+    } else if (error.name === 'NotFoundError') {
+      appError = new NotFoundError(error.message);
+    } else {
+      appError = new AppError(error.message, 500, 'INTERNAL_SERVER_ERROR');
+    }
+  } else {
+    appError = new AppError('An unexpected error occurred', 500, 'INTERNAL_SERVER_ERROR');
+  }
+
+  const errorResponse = {
+    status: 'error',
+    message: appError.message,
+    errorCode: appError.errorCode,
+  };
+
+  return NextResponse.json(errorResponse, { status: appError.statusCode });
+}
+
+export function withErrorHandling(handler: (req: NextRequest) => Promise<NextResponse>) {
+  return async (req: NextRequest) => {
+    try {
+      return await handler(req);
+    } catch (error) {
+      return handleApiError(error);
+    }
+  };
+}
+
+// Filename: utils/errors.ts
+// File: utils/errors.ts
+
+export interface ErrorResponse {
+  status: 'error';
+  message: string;
+  statusCode: number;
+  errorCode?: string;
+}
+
+export class AppError extends Error {
+  statusCode: number;
+  errorCode: string;
+
+  constructor(message: string, statusCode: number, errorCode: string) {
+    super(message);
+    this.name = this.constructor.name;
+    this.statusCode = statusCode;
+    this.errorCode = errorCode;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+export class DatabaseError extends AppError {
+  constructor(message = 'A database error occurred') {
+    super(message, 500, 'DATABASE_ERROR');
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message = 'Invalid input data') {
+    super(message, 400, 'VALIDATION_ERROR');
+  }
+}
+
+export class AuthenticationError extends AppError {
+  constructor(message = 'Authentication failed') {
+    super(message, 401, 'AUTHENTICATION_ERROR');
+  }
+}
+
+export class AuthorizationError extends AppError {
+  constructor(message = 'You do not have permission to perform this action') {
+    super(message, 403, 'AUTHORIZATION_ERROR');
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(message = 'The requested resource was not found') {
+    super(message, 404, 'NOT_FOUND_ERROR');
+  }
+}
+
+export class TokenError extends AppError {
+  constructor(message = 'Token error occurred') {
+    super(message, 401, 'TOKEN_ERROR');
+  }
+}
+
+export class AccessRevokedError extends AppError {
+  constructor(message = 'Access has been revoked') {
+    super(message, 403, 'ACCESS_REVOKED_ERROR');
+  }
+}
+
+export function createErrorResponse(error: AppError): ErrorResponse {
+  return {
+    status: 'error',
+    message: error.message,
+    statusCode: error.statusCode,
+    errorCode: error.errorCode
+  };
+}
+
+export function getClientErrorMessage(error: AppError): string {
+  switch (error.errorCode) {
+    case 'DATABASE_ERROR':
+      return 'We\'re experiencing technical difficulties. Please try again later.';
+    case 'VALIDATION_ERROR':
+      return 'Please check your input and try again.';
+    case 'AUTHENTICATION_ERROR':
+      return 'Please log in to continue.';
+    case 'AUTHORIZATION_ERROR':
+      return 'You don\'t have permission to perform this action.';
+    case 'NOT_FOUND_ERROR':
+      return 'The requested information could not be found.';
+    case 'TOKEN_ERROR':
+      return 'There was an issue with your authentication. Please try logging in again.';
+    case 'ACCESS_REVOKED_ERROR':
+      return 'Your access to the required services has been revoked. Please re-authorize the application.';
+    default:
+      return 'An unexpected error occurred. Please try again later.';
+  }
+}
+
+// Filename: utils/runMigrations.ts
+import fs from 'fs';
+import path from 'path';
+import pool from '@/lib/db';
+
+export async function runMigrations() {
+  const migrationsDir = path.join(process.cwd(), 'migrations');
+  const migrationFiles = fs.readdirSync(migrationsDir).sort();
+
+  for (const file of migrationFiles) {
+    const migration = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+    try {
+      await pool.query(migration);
+      console.log(`Ran migration: ${file}`);
+    } catch (error) {
+      console.error(`Error running migration ${file}:`, error);
+      throw error;
+    }
+  }
+}
