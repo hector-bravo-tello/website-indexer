@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, Drawer, IconButton } from '@mui/material';
+import { Box, IconButton } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import Navigation from '@/components/Navigation';
 import Sidebar from '@/components/Sidebar';
@@ -21,11 +21,16 @@ export interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps) {
   const [error, setError] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(240); // Initial sidebar width
   const pathname = usePathname();
   const isSignInPage = pathname === '/auth/signin';
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
+  };
+
+  const handleSidebarResize = (newWidth: number) => {
+    setSidebarWidth(newWidth);
   };
 
   const handleCloseError = () => {
@@ -41,56 +46,23 @@ export default function RootLayout({ children }: RootLayoutProps) {
             <ErrorContext.Provider value={{ setError }}>
               <ErrorBoundary>
                 {!isSignInPage && (
-                  <Box sx={{ display: 'flex' }}>
-                    <Navigation>
-                      <IconButton
-                        color="inherit"
-                        aria-label="open drawer"
-                        edge="start"
-                        onClick={handleDrawerToggle}
-                        sx={{ mr: 2, display: { sm: 'none' } }}
-                      >
-                        <MenuIcon />
-                      </IconButton>
-                    </Navigation>
-                    <Box
-                      component="nav"
-                      sx={{ width: { sm: 240 }, flexShrink: { sm: 0 } }}
-                    >
-                      <Drawer
-                        variant="temporary"
-                        open={mobileOpen}
-                        onClose={handleDrawerToggle}
-                        ModalProps={{
-                          keepMounted: true,
-                        }}
-                        sx={{
-                          display: { xs: 'block', sm: 'none' },
-                          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
-                        }}
-                      >
-                        <Sidebar open={mobileOpen} />
-                      </Drawer>
-                      <Drawer
-                        variant="permanent"
-                        sx={{
-                          display: { xs: 'none', sm: 'block' },
-                          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
-                        }}
-                        open
-                      >
-                        <Sidebar open={true} />
-                      </Drawer>
-                    </Box>
+                  <Box sx={{ display: 'flex', height: '100vh' }}>
+                    {/* Navigation */}
+                    <Navigation sidebarWidth={sidebarWidth} onMenuClick={handleDrawerToggle} />
+
+                    {/* Sidebar */}
+                    <Sidebar open={mobileOpen} onClose={handleDrawerToggle} onResize={handleSidebarResize} />
+
+                    {/* Main Content */}
                     <Box
                       component="main"
                       sx={{
                         flexGrow: 1,
                         p: 3,
-                        width: { sm: `calc(100% - 240px)` },
+                        width: { sm: `calc(100% - ${sidebarWidth}px)` },
+                        mt: '64px', // Adjust to avoid overlapping with the AppBar (Navigation)
                       }}
                     >
-                      <Navigation.Offset />
                       {children}
                     </Box>
                   </Box>

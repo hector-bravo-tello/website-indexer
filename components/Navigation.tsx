@@ -1,47 +1,51 @@
-'use client';
-
 import React from 'react';
-import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
-import { useSession, signIn, signOut } from 'next-auth/react';
-import Link from 'next/link';
+import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
+import { useSession, signOut } from 'next-auth/react';
 
 interface NavigationProps {
-  children?: React.ReactNode;
+  sidebarWidth: number;
+  onMenuClick: () => void;
 }
 
-const Navigation: React.FC<NavigationProps> = ({ children }) => {
+const Navigation: React.FC<NavigationProps> = ({ sidebarWidth, onMenuClick }) => {
   const { data: session } = useSession();
 
   return (
-    <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
+    <AppBar
+      position="fixed"
+      sx={{
+        zIndex: (theme) => theme.zIndex.drawer + 1,
+        width: { sm: `calc(100% - ${sidebarWidth}px)` },
+        ml: { sm: `${sidebarWidth}px` },
+      }}
+    >
       <Toolbar>
-        {children}
+        <IconButton
+          color="inherit"
+          aria-label="open drawer"
+          edge="start"
+          onClick={onMenuClick}
+          sx={{ mr: 2, display: { sm: 'none' } }}
+        >
+          <MenuIcon />
+        </IconButton>
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          <Link href="/" passHref style={{ color: 'inherit', textDecoration: 'none' }}>
-            Website Indexer
-          </Link>
+          {/* Empty space for alignment */}
         </Typography>
         {session ? (
           <>
             <Typography variant="body1" sx={{ marginRight: 2 }}>
-              {session.user.name}
+              {session.user?.name}
             </Typography>
             <Button color="inherit" onClick={() => signOut()}>
               Logout
             </Button>
           </>
-        ) : (
-          <Button color="inherit" onClick={() => signIn()}>
-            Login
-          </Button>
-        )}
+        ) : null}
       </Toolbar>
     </AppBar>
   );
 };
-
-Navigation.Offset = () => (
-  <Box sx={{ minHeight: (theme) => theme.mixins.toolbar.minHeight }} />
-);
 
 export default Navigation;

@@ -160,6 +160,11 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
+  const searchParams = request.nextUrl.searchParams;
+  const page = parseInt(searchParams.get('page') || '0');
+  const pageSize = parseInt(searchParams.get('pageSize') || '25');
+  const orderBy = searchParams.get('orderBy') || 'url';
+  const order = searchParams.get('order') || 'asc';
 
   if (isNaN(websiteId)) {
     throw new NotFoundError('Invalid website ID');
@@ -171,9 +176,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  const { pages } = await getPagesByWebsiteId(websiteId);
+  const { pages, totalCount } = await getPagesByWebsiteId(websiteId, page, pageSize, orderBy, order);
 
-  return NextResponse.json({ pages });
+  return NextResponse.json({ pages, totalCount });
 });
 
 // Filename: app/api/websites/[websiteId]/route.ts
@@ -575,7 +580,7 @@ import React, { useState } from 'react';
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, Drawer, IconButton } from '@mui/material';
+import { Box, IconButton } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import Navigation from '@/components/Navigation';
 import Sidebar from '@/components/Sidebar';
@@ -592,11 +597,16 @@ export interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps) {
   const [error, setError] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(240); // Initial sidebar width
   const pathname = usePathname();
   const isSignInPage = pathname === '/auth/signin';
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
+  };
+
+  const handleSidebarResize = (newWidth: number) => {
+    setSidebarWidth(newWidth);
   };
 
   const handleCloseError = () => {
@@ -612,56 +622,23 @@ export default function RootLayout({ children }: RootLayoutProps) {
             <ErrorContext.Provider value={{ setError }}>
               <ErrorBoundary>
                 {!isSignInPage && (
-                  <Box sx={{ display: 'flex' }}>
-                    <Navigation>
-                      <IconButton
-                        color="inherit"
-                        aria-label="open drawer"
-                        edge="start"
-                        onClick={handleDrawerToggle}
-                        sx={{ mr: 2, display: { sm: 'none' } }}
-                      >
-                        <MenuIcon />
-                      </IconButton>
-                    </Navigation>
-                    <Box
-                      component="nav"
-                      sx={{ width: { sm: 240 }, flexShrink: { sm: 0 } }}
-                    >
-                      <Drawer
-                        variant="temporary"
-                        open={mobileOpen}
-                        onClose={handleDrawerToggle}
-                        ModalProps={{
-                          keepMounted: true,
-                        }}
-                        sx={{
-                          display: { xs: 'block', sm: 'none' },
-                          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
-                        }}
-                      >
-                        <Sidebar open={mobileOpen} />
-                      </Drawer>
-                      <Drawer
-                        variant="permanent"
-                        sx={{
-                          display: { xs: 'none', sm: 'block' },
-                          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
-                        }}
-                        open
-                      >
-                        <Sidebar open={true} />
-                      </Drawer>
-                    </Box>
+                  <Box sx={{ display: 'flex', height: '100vh' }}>
+                    {/* Navigation */}
+                    <Navigation sidebarWidth={sidebarWidth} onMenuClick={handleDrawerToggle} />
+
+                    {/* Sidebar */}
+                    <Sidebar open={mobileOpen} onClose={handleDrawerToggle} onResize={handleSidebarResize} />
+
+                    {/* Main Content */}
                     <Box
                       component="main"
                       sx={{
                         flexGrow: 1,
                         p: 3,
-                        width: { sm: `calc(100% - 240px)` },
+                        width: { sm: `calc(100% - ${sidebarWidth}px)` },
+                        mt: '64px', // Adjust to avoid overlapping with the AppBar (Navigation)
                       }}
                     >
-                      <Navigation.Offset />
                       {children}
                     </Box>
                   </Box>
@@ -676,6 +653,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
     </html>
   );
 }
+
 
 // Filename: app/page.tsx
 'use client';
@@ -730,17 +708,37 @@ import {
   Alert,
   useTheme,
   useMediaQuery,
+  TablePagination,
+  TableSortLabel,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
 
 interface IndexingStats {
-  total_pages: number,
-  indexed_pages: number,
-  not_indexed_pages: number
+  total_pages: number;
+  indexed_pages: number;
+  not_indexed_pages: number;
 }
 
 const indexed: string = 'Submitted and indexed';
+
+type Order = 'asc' | 'desc';
+
+interface HeadCell {
+  id: keyof Page;
+  label: string;
+  numeric: boolean;
+}
+
+const headCells: HeadCell[] = [
+  { id: 'url', label: 'URL', numeric: false },
+  { id: 'indexing_status', label: 'Status', numeric: false },
+  { id: 'last_indexed_date', label: 'Last Indexed', numeric: false },
+];
 
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
@@ -749,61 +747,79 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [indexingStats, setIndexingStats] = useState<IndexingStats>({
     total_pages: 0,
     indexed_pages: 0,
-    not_indexed_pages: 0
+    not_indexed_pages: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [order, setOrder] = useState<Order>('asc');
+  const [orderBy, setOrderBy] = useState<keyof Page>('url');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
 
   const setGlobalError = useError();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   useEffect(() => {
-    const fetchWebsiteDetails = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        const websiteResponse = await fetch(`/api/websites/${websiteId}`);
-        const pagesResponse = await fetch(`/api/websites/${websiteId}/pages`);
-
-        if (!websiteResponse.ok || !pagesResponse.ok) {
-          throw new Error('Failed to fetch website details');
-        }
-
-        const websiteData = await websiteResponse.json();
-        const pagesData = await pagesResponse.json();
-
-        if (!websiteData) {
-          setError('Website not found');
-          return;
-        }
-
-        setWebsite(websiteData);
-        setPages(pagesData.pages || []);
-
-        // Calculate indexing stats
-        const totalPages = pagesData.pages ? pagesData.pages.length : 0;
-        const indexedPages = pagesData.pages ? pagesData.pages.filter((page: Page) => page.indexing_status === indexed).length : 0;
-        const notIndexedPages = totalPages - indexedPages;
-
-        setIndexingStats({
-          total_pages: totalPages,
-          indexed_pages: indexedPages,
-          not_indexed_pages: notIndexedPages
-        });
-
-      } catch (err) {
-        console.error('Error fetching website details:', err);
-        setError('An error occurred while fetching website details');
-        setGlobalError('Failed to load website details. Please try again later.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchWebsiteDetails();
-  }, [websiteId, setGlobalError]);
+  }, [websiteId, page, rowsPerPage, order, orderBy]);
+
+  const fetchWebsiteDetails = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const websiteResponse = await fetch(`/api/websites/${websiteId}`);
+      const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?page=${page}&pageSize=${rowsPerPage}&orderBy=${orderBy}&order=${order}`);
+
+      if (!websiteResponse.ok || !pagesResponse.ok) {
+        throw new Error('Failed to fetch website details');
+      }
+
+      const websiteData = await websiteResponse.json();
+      const pagesData = await pagesResponse.json();
+
+      if (!websiteData) {
+        setError('Website not found');
+        return;
+      }
+
+      setWebsite(websiteData);
+      setPages(pagesData.pages || []);
+
+      // Calculate indexing stats
+      const totalPages = pagesData.pages ? pagesData.pages.length : 0;
+      const indexedPages = pagesData.pages ? pagesData.pages.filter((page: Page) => page.indexing_status === indexed).length : 0;
+      const notIndexedPages = totalPages - indexedPages;
+
+      setIndexingStats({
+        total_pages: totalPages,
+        indexed_pages: indexedPages,
+        not_indexed_pages: notIndexedPages,
+      });
+    } catch (err) {
+      console.error('Error fetching website details:', err);
+      setError('An error occurred while fetching website details');
+      setGlobalError('Failed to load website details. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRequestSort = (property: keyof Page) => {
+    const isAsc = orderBy === property && order === 'asc';
+    setOrder(isAsc ? 'desc' : 'asc');
+    setOrderBy(property);
+  };
+
+  const handleChangePage = (event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
 
   if (loading) {
     return (
@@ -859,49 +875,70 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       <Typography variant="h5" gutterBottom>
         Pages
       </Typography>
-      
+
       {pages.length > 0 ? (
-        <TableContainer component={Paper}>
-          <Table sx={{ minWidth: 300 }} aria-label="website pages table">
-            <TableHead>
-              <TableRow>
-                <TableCell>URL</TableCell>
-                {!isMobile && <TableCell>Status</TableCell>}
-                <TableCell>Last Indexed</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {pages.map((page) => (
-                <TableRow key={page.id}>
-                  <TableCell component="th" scope="row" sx={{
-                    maxWidth: isMobile ? 150 : 300,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    {page.url}
-                  </TableCell>
-                  {!isMobile && (
+        <Paper>
+          <TableContainer>
+            <Table sx={{ minWidth: 300 }} aria-label="website pages table">
+              <TableHead>
+                <TableRow>
+                  {headCells.map((headCell) => (
+                    <TableCell
+                      key={headCell.id}
+                      align={headCell.numeric ? 'right' : 'left'}
+                      sortDirection={orderBy === headCell.id ? order : false}
+                    >
+                      <TableSortLabel
+                        active={orderBy === headCell.id}
+                        direction={orderBy === headCell.id ? order : 'asc'}
+                        onClick={() => handleRequestSort(headCell.id)}
+                      >
+                        {headCell.label}
+                      </TableSortLabel>
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {pages.map((page) => (
+                  <TableRow key={page.id}>
+                    <TableCell
+                      component="th"
+                      scope="row"
+                      sx={{
+                        maxWidth: isMobile ? 0 : 300,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        display: isMobile ? 'none' : 'table-cell',
+                      }}
+                    >
+                      {page.url}
+                    </TableCell>
                     <TableCell>
                       {page.indexing_status === indexed ? 'Indexed' : 'Not Indexed'}
                     </TableCell>
-                  )}
-                  <TableCell>
-                    {isMobile && (
-                      <Typography variant="body2" color="text.secondary">
-                        {page.indexing_status === indexed ? 'Indexed' : 'Not Indexed'}
-                      </Typography>
-                    )}
-                    {page.last_indexed_date 
-                      ? new Date(page.last_indexed_date).toLocaleString() 
-                      : 'Never'
-                    }
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                    <TableCell>
+                      {page.last_indexed_date
+                        ? new Date(page.last_indexed_date).toLocaleString()
+                        : 'Never'
+                      }
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          <TablePagination
+            rowsPerPageOptions={[25, 50, 100]}
+            component="div"
+            count={indexingStats.total_pages}
+            rowsPerPage={rowsPerPage}
+            page={page}
+            onPageChange={handleChangePage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+          />
+        </Paper>
       ) : (
         <Alert severity="info">No pages found for this website.</Alert>
       )}
@@ -1084,68 +1121,76 @@ const ErrorHandler: React.FC<ErrorHandlerProps> = ({ error, onClose }) => {
 export default ErrorHandler;
 
 // Filename: components/Navigation.tsx
-'use client';
-
 import React from 'react';
-import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
-import { useSession, signIn, signOut } from 'next-auth/react';
-import Link from 'next/link';
+import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
+import { useSession, signOut } from 'next-auth/react';
 
 interface NavigationProps {
-  children?: React.ReactNode;
+  sidebarWidth: number;
+  onMenuClick: () => void;
 }
 
-const Navigation: React.FC<NavigationProps> = ({ children }) => {
+const Navigation: React.FC<NavigationProps> = ({ sidebarWidth, onMenuClick }) => {
   const { data: session } = useSession();
 
   return (
-    <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
+    <AppBar
+      position="fixed"
+      sx={{
+        zIndex: (theme) => theme.zIndex.drawer + 1,
+        width: { sm: `calc(100% - ${sidebarWidth}px)` },
+        ml: { sm: `${sidebarWidth}px` },
+      }}
+    >
       <Toolbar>
-        {children}
+        <IconButton
+          color="inherit"
+          aria-label="open drawer"
+          edge="start"
+          onClick={onMenuClick}
+          sx={{ mr: 2, display: { sm: 'none' } }}
+        >
+          <MenuIcon />
+        </IconButton>
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          <Link href="/" passHref style={{ color: 'inherit', textDecoration: 'none' }}>
-            Website Indexer
-          </Link>
+          {/* Empty space for alignment */}
         </Typography>
         {session ? (
           <>
             <Typography variant="body1" sx={{ marginRight: 2 }}>
-              {session.user.name}
+              {session.user?.name}
             </Typography>
             <Button color="inherit" onClick={() => signOut()}>
               Logout
             </Button>
           </>
-        ) : (
-          <Button color="inherit" onClick={() => signIn()}>
-            Login
-          </Button>
-        )}
+        ) : null}
       </Toolbar>
     </AppBar>
   );
 };
 
-Navigation.Offset = () => (
-  <Box sx={{ minHeight: (theme) => theme.mixins.toolbar.minHeight }} />
-);
-
 export default Navigation;
+
 
 // Filename: components/Sidebar.tsx
 import React, { useState, useEffect } from 'react';
-import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, Divider, CircularProgress } from '@mui/material';
-import { Dashboard as DashboardIcon, Web as WebIcon } from '@mui/icons-material';
+import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton, CircularProgress } from '@mui/material';
+import { Dashboard as DashboardIcon, Web as WebIcon, Close as CloseIcon } from '@mui/icons-material';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Website } from '@/types';
 
 interface SidebarProps {
   open: boolean;
+  onClose?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ open }) => {
+const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(280); // Increased sidebar width
 
   useEffect(() => {
     fetchWebsites();
@@ -1167,76 +1212,147 @@ const Sidebar: React.FC<SidebarProps> = ({ open }) => {
     }
   };
 
-  const extractDomain = (input: string): string => {
-    if (!input) return 'Unknown Domain';
-    
-    let domain = input.replace(/^sc-domain:/, '');
-    domain = domain.replace(/^(https?:\/\/)?(www\.)?/, '');
-    domain = domain.split('/')[0].split('?')[0];
-    
-    return domain;
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
-  return (
-    <Box
-      component="nav"
-      sx={{
-        width: { sm: open ? 240 : 0 },
-        flexShrink: { sm: 0 },
-      }}
-    >
-      <Drawer
-        variant="permanent"
-        open={open}
+  const handleMouseMove = (e: MouseEvent) => {
+    setSidebarWidth(Math.max(200, e.clientX)); // Minimum width set to 200px
+  };
+
+  const handleMouseUp = () => {
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleLinkClick = () => {
+    if (onClose) {
+      onClose();
+    }
+  };
+
+  // Utility function to extract clean domain names
+  const extractDomainName = (domain: string) => {
+    return domain.replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+  };
+
+  const drawerContent = (
+    <Box sx={{ width: sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+      {/* Logo section with close button */}
+      <Box
         sx={{
-          display: { xs: 'none', sm: 'block' },
-          '& .MuiDrawer-paper': {
-            boxSizing: 'border-box',
-            width: 240,
-            top: ['64px', '64px', '64px'],
-            height: 'calc(100% - 64px)',
-            backgroundColor: '#f5f5f5',
-          },
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center', // Center the logo
+          padding: 2,
+          height: '64px', // Match the height of the AppBar (Navigation)
+          position: 'relative',
         }}
       >
-        <List>
-          <ListItem component={Link} href="/dashboard">
+        <Link href="/" passHref>
+          <Image src="/images/logo.png" alt="App Logo" width={180} height={40} style={{ cursor: 'pointer' }} />
+        </Link>
+        {onClose && (
+          <IconButton onClick={onClose} sx={{ position: 'absolute', right: 8, display: { sm: 'none' } }}>
+            <CloseIcon />
+          </IconButton>
+        )}
+      </Box>
+
+      {/* Dashboard Link */}
+      <List>
+        <Link href="/dashboard" passHref legacyBehavior>
+          <ListItem button component="a" onClick={handleLinkClick}>
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
             <ListItemText primary="Dashboard" />
           </ListItem>
-        </List>
-        <Divider />
-        <List>
+        </Link>
+      </List>
+
+      {/* Enabled Websites */}
+      <List>
+        <ListItem>
+          <ListItemText primary="Enabled Websites" />
+        </ListItem>
+        {loading ? (
           <ListItem>
-            <ListItemText primary="Enabled Websites" />
+            <CircularProgress size={24} />
           </ListItem>
-          {loading ? (
-            <ListItem>
-              <CircularProgress size={24} />
-            </ListItem>
-          ) : (
-            websites.map((website) => (
-              <ListItem
-                key={website.id}
-                component={Link}
-                href={`/website/${website.id}`}
-              >
+        ) : websites.length > 0 ? (
+          websites.map((website) => (
+            <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
+              <ListItem button component="a" onClick={handleLinkClick}>
                 <ListItemIcon>
                   <WebIcon />
                 </ListItemIcon>
-                <ListItemText primary={extractDomain(website.domain)} />
+                <ListItemText primary={extractDomainName(website.domain)} />
               </ListItem>
-            ))
-          )}
-        </List>
+            </Link>
+          ))
+        ) : (
+          <ListItem>
+            <ListItemText primary="No enabled websites" />
+          </ListItem>
+        )}
+      </List>
+
+      {/* Resizable Handle */}
+      <Box
+        sx={{
+          width: '5px',
+          cursor: 'col-resize',
+          position: 'absolute',
+          right: 0,
+          top: 0,
+          height: '100vh',
+          zIndex: 1000,
+          backgroundColor: 'transparent',
+        }}
+        onMouseDown={handleMouseDown}
+      />
+    </Box>
+  );
+
+  return (
+    <Box component="nav" sx={{ width: { sm: sidebarWidth }, flexShrink: { sm: 0 } }}>
+      {/* Mobile Sidebar */}
+      <Drawer
+        variant="temporary"
+        open={open}
+        onClose={onClose}
+        ModalProps={{
+          keepMounted: true, // Better performance on mobile
+        }}
+        sx={{
+          display: { xs: 'block', sm: 'none' },
+          zIndex: (theme) => theme.zIndex.drawer + 2, // Ensure drawer is above the top bar in mobile
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' }, // Prevent scrollbars
+        }}
+      >
+        {drawerContent}
+      </Drawer>
+
+      {/* Desktop Sidebar */}
+      <Drawer
+        variant="permanent"
+        sx={{
+          display: { xs: 'none', sm: 'block' },
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' }, // Prevent scrollbars
+        }}
+        open
+      >
+        {drawerContent}
       </Drawer>
     </Box>
   );
 };
 
 export default Sidebar;
+
 
 // Filename: components/WebsiteList.tsx
 import React from 'react';
@@ -2603,11 +2719,33 @@ export async function updateWebsiteRobotsScan(id: number): Promise<{ statusCode:
   }
 }
 
-export async function getPagesByWebsiteId(websiteId: number): Promise<{ pages: Page[], statusCode: number }> {
+export async function getPagesByWebsiteId(
+  websiteId: number, 
+  page: number, 
+  pageSize: number, 
+  orderBy: string, 
+  order: 'asc' | 'desc'
+): Promise<{ pages: Page[], totalCount: number, statusCode: number }> {
   try {
-    const query = 'SELECT * FROM pages WHERE website_id = $1';
-    const result = await pool.query(query, [websiteId]);
-    return { pages: result.rows, statusCode: 200 };
+    const offset = page * pageSize;
+    const query = `
+      SELECT * FROM pages 
+      WHERE website_id = $1 
+      ORDER BY ${orderBy} ${order}
+      LIMIT $2 OFFSET $3
+    `;
+    const countQuery = 'SELECT COUNT(*) FROM pages WHERE website_id = $1';
+    
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [websiteId, pageSize, offset]),
+      pool.query(countQuery, [websiteId])
+    ]);
+
+    return { 
+      pages: result.rows, 
+      totalCount: parseInt(countResult.rows[0].count), 
+      statusCode: 200 
+    };
   } catch (error) {
     handleDatabaseError(error);
   }

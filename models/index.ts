@@ -164,11 +164,33 @@ export async function updateWebsiteRobotsScan(id: number): Promise<{ statusCode:
   }
 }
 
-export async function getPagesByWebsiteId(websiteId: number): Promise<{ pages: Page[], statusCode: number }> {
+export async function getPagesByWebsiteId(
+  websiteId: number, 
+  page: number, 
+  pageSize: number, 
+  orderBy: string, 
+  order: 'asc' | 'desc'
+): Promise<{ pages: Page[], totalCount: number, statusCode: number }> {
   try {
-    const query = 'SELECT * FROM pages WHERE website_id = $1';
-    const result = await pool.query(query, [websiteId]);
-    return { pages: result.rows, statusCode: 200 };
+    const offset = page * pageSize;
+    const query = `
+      SELECT * FROM pages 
+      WHERE website_id = $1 
+      ORDER BY ${orderBy} ${order}
+      LIMIT $2 OFFSET $3
+    `;
+    const countQuery = 'SELECT COUNT(*) FROM pages WHERE website_id = $1';
+    
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [websiteId, pageSize, offset]),
+      pool.query(countQuery, [websiteId])
+    ]);
+
+    return { 
+      pages: result.rows, 
+      totalCount: parseInt(countResult.rows[0].count), 
+      statusCode: 200 
+    };
   } catch (error) {
     handleDatabaseError(error);
   }

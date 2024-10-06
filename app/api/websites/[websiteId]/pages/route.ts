@@ -13,6 +13,11 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
+  const searchParams = request.nextUrl.searchParams;
+  const page = parseInt(searchParams.get('page') || '0');
+  const pageSize = parseInt(searchParams.get('pageSize') || '25');
+  const orderBy = searchParams.get('orderBy') || 'url';
+  const order = searchParams.get('order') || 'asc';
 
   if (isNaN(websiteId)) {
     throw new NotFoundError('Invalid website ID');
@@ -24,7 +29,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  const { pages } = await getPagesByWebsiteId(websiteId);
+  const { pages, totalCount } = await getPagesByWebsiteId(websiteId, page, pageSize, orderBy, order);
 
-  return NextResponse.json({ pages });
+  return NextResponse.json({ pages, totalCount });
 });
