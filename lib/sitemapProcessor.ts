@@ -2,16 +2,30 @@ import axios from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import jobQueue from '@/lib/jobQueue';
+import { Website, IndexingStatus } from '@/types';
 import { 
   getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
   updateWebsiteRobotsScan, 
   getWebsiteById 
 } from '@/models';
-import { Website } from '@/types';
+import { fetchBulkIndexingStatus } from './googleSearchConsole';
+import { getValidAccessToken } from './tokenManager';
 import { ValidationError } from '@/utils/errors';
 
 const parseXml = promisify(parseString);
+
+function cleanDomain(inputDomain: string): string {
+  let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
+  try {
+    const url = new URL(cleanedDomain);
+    cleanedDomain = url.hostname;
+  } catch {
+    // If it's not a valid URL, assume it's already just a domain
+  }
+  cleanedDomain = cleanedDomain.replace(/^www\./, '');
+  return cleanedDomain;
+}
 
 // Function to queue the website processing as background jobs
 export async function scheduleSitemapProcessing(): Promise<void> {
@@ -28,21 +42,22 @@ export async function scheduleSitemapProcessing(): Promise<void> {
 // Function to process a single website, called as part of the background job
 export async function processSingleWebsite(website: Website): Promise<void> {
   try {
-    const robotsTxtUrl = `https://${website.domain}/robots.txt`;
+    const cleanedDomain = cleanDomain(website.domain);
+    const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
     const allSitemapUrls = extractSitemapUrls(robotsTxtContent);
     const filteredSitemapUrls = filterSitemaps(allSitemapUrls);
 
     let totalPages = 0;
     for (const sitemapUrl of filteredSitemapUrls) {
-      const pageCount = await processSitemap(website.id, sitemapUrl);
+      const pageCount = await processSitemap(website.id, website.domain, sitemapUrl, website.user_id);
       totalPages += pageCount;
     }
 
-    console.log(`Processed ${totalPages} pages for ${website.domain}`);
+    console.log(`Processed ${totalPages} pages for ${cleanedDomain}`);
     await updateWebsiteRobotsScan(website.id);
   } catch (error) {
-    console.error(`Error processing website ${website.domain}:`, error);
+    console.error(`Error processing website ${cleanDomain(website.domain)}:`, error);
   }
 }
 
@@ -79,12 +94,29 @@ function filterSitemaps(sitemapUrls: string[]): string[] {
   });
 }
 
-// Function to process a single sitemap and extract URLs
-async function processSitemap(websiteId: number, sitemapUrl: string): Promise<number> {
+async function processSitemap(websiteId: number, domain: string, sitemapUrl: string, userId: number): Promise<number> {
   try {
     const sitemapContent = await fetchUrl(sitemapUrl);
     const pages = await parseSitemap(sitemapContent);
-    await addOrUpdatePagesFromSitemap(websiteId, pages);
+    
+    const urls = pages.map(page => page.url);
+
+    // Fetch the actual indexing status and last indexed date from Google Search Console
+    const accessToken = await getValidAccessToken(userId);
+    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, urls);
+
+    // Combine sitemap data with indexing data
+    const formattedPages = pages.map(page => {
+      const indexedPage = indexedPages.find(ip => ip.url === page.url);
+      return {
+        url: page.url,
+        lastIndexedDate: indexedPage?.lastIndexedDate || null,
+        indexingStatus: indexedPage?.indexingStatus || 'not_indexed' as IndexingStatus
+      };
+    });
+
+    await addOrUpdatePagesFromSitemap(websiteId, formattedPages);
+
     return pages.length;
   } catch (error) {
     console.error(`Error processing sitemap ${sitemapUrl}:`, error);

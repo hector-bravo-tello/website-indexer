@@ -37,15 +37,25 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new ValidationError('Invalid input: enabled must be a boolean');
   }
 
+  const isFirstTimeEnabled = !website.indexing_enabled && enabled;
   const { website: updatedWebsite } = await updateWebsite(websiteId, { indexing_enabled: enabled });
 
   let message = '';
   if (enabled) {
-    await jobQueue.addJob(websiteId);
-    message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
-  } else {
+    message = 'Auto-indexing enabled.';
+    if (isFirstTimeEnabled) {
+      // If indexing is being enabled for the first time, start a background indexing job
+      try {
+        // Enqueue the job for processing the sitemap in the background
+        await jobQueue.addJob(websiteId);
+        message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
+      } catch (error) {
+        console.error(`Failed to start indexing job for website ${websiteId}:`, error);
+      }
+    }
+  }
+  else {  
     message = 'Auto-indexing disabled.';
   }
-
   return NextResponse.json({ website: updatedWebsite, message });
 });

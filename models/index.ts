@@ -200,6 +200,19 @@ export async function updatePageData(websiteId: number, url: string, indexingSta
   }
 }
 
+export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { url: string, lastIndexedDate?: string | null, indexingStatus?: IndexingStatus }[]
+): Promise<{ statusCode: number }> {
+  try {
+    const query = 'SELECT bulk_upsert_pages($1, $2)';
+    await pool.query(query, [websiteId, JSON.stringify(pages)]);
+    return { statusCode: 200 };
+
+  } catch (error) {
+    console.error('Error in addOrUpdatePagesFromSitemap:', error);
+    throw error;
+  }
+}
+
 export async function getPagesForIndexing(websiteId: number, limit: number): Promise<{ pages: Page[], statusCode: number }> {
   try {
     const query = 'SELECT * FROM get_pages_for_indexing($1, $2)';
@@ -276,16 +289,6 @@ export async function getWebsiteIndexingStats(websiteId: number): Promise<{ stat
     const query = 'SELECT * FROM get_website_indexing_stats($1)';
     const result = await pool.query(query, [websiteId]);
     return { stats: result.rows[0], statusCode: 200 };
-  } catch (error) {
-    handleDatabaseError(error);
-  }
-}
-
-export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { url: string }[]): Promise<{ statusCode: number }> {
-  try {
-    const query = 'SELECT add_or_update_pages_from_sitemap($1, $2)';
-    await pool.query(query, [websiteId, JSON.stringify(pages)]);
-    return { statusCode: 200 };
   } catch (error) {
     handleDatabaseError(error);
   }

@@ -22,6 +22,12 @@ const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, o
     await onToggleIndexing(websiteId, currentStatus);
   };
 
+  const formatLastScanned = (date: Date | null | undefined): string => {
+    if (!date) return 'None';
+    const formattedDate = new Date(date).toLocaleString();
+    return formattedDate !== 'Invalid Date' ? formattedDate : 'None';
+  };
+
   return (
     <>
       <Button
@@ -37,7 +43,7 @@ const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, o
           <ListItem key={website.id}>
             <ListItemText 
               primary={website.domain}
-              secondary={`Last scanned: ${new Date(website.last_robots_scan || '').toLocaleString()}`}
+              secondary={`Last scanned: ${formatLastScanned(website.last_robots_scan)}`}
             />
             <ListItemSecondaryAction>
               <Switch
