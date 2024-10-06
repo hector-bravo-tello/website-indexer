@@ -40,7 +40,7 @@ const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, o
       </Button>
       <List>
         {websites.map((website) => (
-          <ListItem key={website.id}>
+          <ListItem key={website.id} component="div">
             <ListItemText 
               primary={website.domain}
               secondary={`Last scanned: ${formatLastScanned(website.last_robots_scan)}`}

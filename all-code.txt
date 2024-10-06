@@ -144,11 +144,11 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return NextResponse.json(gscData);
 });
 
-// Filename: app/api/websites/[websiteId]/indexing-stats/route.ts
+// Filename: app/api/websites/[websiteId]/pages/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { getWebsitesByUserId, getWebsiteIndexingStats, startIndexingJob } from '@/models';
+import { getPagesByWebsiteId, getWebsiteById } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError } from '@/utils/errors';
 
@@ -162,34 +162,27 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
 
   if (isNaN(websiteId)) {
-    throw new ValidationError('Invalid website ID');
+    throw new NotFoundError('Invalid website ID');
   }
 
-  // Check if the website belongs to the current user
-  const { websites } = await getWebsitesByUserId(session.user.id);
-  const website = websites.find(w => w.id === websiteId);
+  const { website } = await getWebsiteById(websiteId);
 
-  if (!website) {
+  if (!website || website.user_id !== parseInt(session.user.id)) {
     throw new NotFoundError('Website not found');
   }
 
-  const { stats } = await getWebsiteIndexingStats(websiteId);
+  const { pages } = await getPagesByWebsiteId(websiteId);
 
-  // Trigger a new indexing job if there are pages to be indexed
-  if (stats.not_indexed_pages > 0) {
-    await startIndexingJob(websiteId, 100); // Process 100 pages per job
-  }
-
-  return NextResponse.json({ stats });
+  return NextResponse.json({ pages });
 });
 
-// Filename: app/api/websites/[websiteId]/pages/route.ts
+// Filename: app/api/websites/[websiteId]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { getPagesByWebsiteId, getWebsitesByUserId } from '@/models';
+import { getWebsiteById } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
-import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
+import { AuthenticationError, NotFoundError } from '@/utils/errors';
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
   const session = await getServerSession(authOptions);
@@ -201,19 +194,16 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
 
   if (isNaN(websiteId)) {
-    throw new ValidationError('Invalid website ID');
+    throw new NotFoundError('Invalid website ID');
   }
 
-  // Check if the website belongs to the current user
-  const { websites } = await getWebsitesByUserId(session.user.id);
-  const website = websites.find(w => w.id === websiteId);
+  const { website } = await getWebsiteById(websiteId);
 
-  if (!website) {
+  if (!website || website.user_id !== parseInt(session.user.id)) {
     throw new NotFoundError('Website not found');
   }
 
-  const { pages } = await getPagesByWebsiteId(websiteId);
-  return NextResponse.json({ pages });
+  return NextResponse.json(website);
 });
 
 // Filename: app/api/websites/[websiteId]/toggle-indexing/route.ts
@@ -256,16 +246,26 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new ValidationError('Invalid input: enabled must be a boolean');
   }
 
+  const isFirstTimeEnabled = !website.indexing_enabled && enabled;
   const { website: updatedWebsite } = await updateWebsite(websiteId, { indexing_enabled: enabled });
 
   let message = '';
   if (enabled) {
-    await jobQueue.addJob(websiteId);
-    message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
-  } else {
+    message = 'Auto-indexing enabled.';
+    if (isFirstTimeEnabled) {
+      // If indexing is being enabled for the first time, start a background indexing job
+      try {
+        // Enqueue the job for processing the sitemap in the background
+        await jobQueue.addJob(websiteId);
+        message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
+      } catch (error) {
+        console.error(`Failed to start indexing job for website ${websiteId}:`, error);
+      }
+    }
+  }
+  else {  
     message = 'Auto-indexing disabled.';
   }
-
   return NextResponse.json({ website: updatedWebsite, message });
 });
 
@@ -295,7 +295,6 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 });
 
 // Filename: app/api/websites/route.ts
-// api/websites/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -313,14 +312,13 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const userId = parseInt(session.user.id);
   const { websites } = await getWebsitesByUserId(userId);
 
-  return NextResponse.json(websites);
+  return NextResponse.json(websites || []);
 });
 
 // Filename: app/auth/signin/page.tsx
-// File: app/auth/signin/page.tsx
 'use client';
 
-import { Box, Typography, Button } from '@mui/material';
+import { Box, Typography, Button, useMediaQuery, Theme } from '@mui/material';
 import Image from "next/image";
 import { signIn } from 'next-auth/react';
 import { Google as GoogleIcon } from '@mui/icons-material';
@@ -328,26 +326,43 @@ import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
+  const isMobile = useMediaQuery((theme: Theme) => theme.breakpoints.down('sm'));
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center' }}>
+    <Box sx={{ 
+      display: 'flex', 
+      flexDirection: isMobile ? 'column' : 'row',
+      height: '100vh',
+    }}>
       {/* Left side with image */}
-      <Box sx={{ flex: 1, position: 'relative' }}>
+      <Box sx={{ 
+        flex: isMobile ? 'none' : 1, 
+        position: 'relative',
+        height: isMobile ? '30vh' : '100vh',
+      }}>
         <Image
           src="/images/background.webp"
           alt="Website Indexer"
           priority
-          width={1024}
-          height={1300}
+          layout="fill"
+          objectFit="cover"
         />
       </Box>
 
       {/* Right side with login form */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', p: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
+      <Box sx={{ 
+        flex: isMobile ? 'none' : 1, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        p: 4,
+        height: isMobile ? '70vh' : '100vh',
+      }}>
+        <Typography variant="h4" component="h1" gutterBottom align="center">
           Website Indexer
         </Typography>
-        <Typography variant="h6" component="h2" gutterBottom>
+        <Typography variant="h6" component="h2" gutterBottom align="center">
           Inicia sesión o regístrate
         </Typography>
 
@@ -453,6 +468,21 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const extractDomain = (input: string): string => {
+    if (!input) return 'Unknown Domain';
+    
+    // Remove 'sc-domain:' prefix if present
+    let domain = input.replace(/^sc-domain:/, '');
+    
+    // Remove protocol and www if present
+    domain = domain.replace(/^(https?:\/\/)?(www\.)?/, '');
+    
+    // Remove path and query string if present
+    domain = domain.split('/')[0].split('?')[0];
+    
+    return domain;
+  };
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
@@ -468,7 +498,10 @@ const Dashboard: React.FC = () => {
       </Typography>
       {websites && (
         <WebsiteList 
-          websites={websites} 
+          websites={websites.map(website => ({
+            ...website,
+            displayDomain: extractDomain(website.domain)
+          }))} 
           onToggleIndexing={handleToggleIndexing}
           onRefresh={handleRefresh}
         />
@@ -542,7 +575,10 @@ import React, { useState } from 'react';
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import { Box, Drawer, IconButton } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
 import Navigation from '@/components/Navigation';
+import Sidebar from '@/components/Sidebar';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import ErrorHandler from '@/components/ErrorHandler';
 import { usePathname } from 'next/navigation';
@@ -555,8 +591,13 @@ export interface RootLayoutProps {
 
 export default function RootLayout({ children }: RootLayoutProps) {
   const [error, setError] = useState<string | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
   const isSignInPage = pathname === '/auth/signin';
+
+  const handleDrawerToggle = () => {
+    setMobileOpen(!mobileOpen);
+  };
 
   const handleCloseError = () => {
     setError(null);
@@ -570,8 +611,62 @@ export default function RootLayout({ children }: RootLayoutProps) {
             <CssBaseline />
             <ErrorContext.Provider value={{ setError }}>
               <ErrorBoundary>
-                {!isSignInPage && <Navigation />}
-                {children}
+                {!isSignInPage && (
+                  <Box sx={{ display: 'flex' }}>
+                    <Navigation>
+                      <IconButton
+                        color="inherit"
+                        aria-label="open drawer"
+                        edge="start"
+                        onClick={handleDrawerToggle}
+                        sx={{ mr: 2, display: { sm: 'none' } }}
+                      >
+                        <MenuIcon />
+                      </IconButton>
+                    </Navigation>
+                    <Box
+                      component="nav"
+                      sx={{ width: { sm: 240 }, flexShrink: { sm: 0 } }}
+                    >
+                      <Drawer
+                        variant="temporary"
+                        open={mobileOpen}
+                        onClose={handleDrawerToggle}
+                        ModalProps={{
+                          keepMounted: true,
+                        }}
+                        sx={{
+                          display: { xs: 'block', sm: 'none' },
+                          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
+                        }}
+                      >
+                        <Sidebar open={mobileOpen} />
+                      </Drawer>
+                      <Drawer
+                        variant="permanent"
+                        sx={{
+                          display: { xs: 'none', sm: 'block' },
+                          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
+                        }}
+                        open
+                      >
+                        <Sidebar open={true} />
+                      </Drawer>
+                    </Box>
+                    <Box
+                      component="main"
+                      sx={{
+                        flexGrow: 1,
+                        p: 3,
+                        width: { sm: `calc(100% - 240px)` },
+                      }}
+                    >
+                      <Navigation.Offset />
+                      {children}
+                    </Box>
+                  </Box>
+                )}
+                {isSignInPage && children}
                 <ErrorHandler error={error} onClose={handleCloseError} />
               </ErrorBoundary>
             </ErrorContext.Provider>
@@ -615,6 +710,204 @@ const HomeClient: React.FC = () => {
 };
 
 export default HomeClient;
+
+// Filename: app/website/[websiteId]/page.tsx
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Grid,
+  CircularProgress,
+  Alert,
+  useTheme,
+  useMediaQuery,
+} from '@mui/material';
+import { Website, Page } from '@/types';
+import { useError } from '@/lib/useError';
+
+interface IndexingStats {
+  total_pages: number,
+  indexed_pages: number,
+  not_indexed_pages: number
+}
+
+const indexed: string = 'Submitted and indexed';
+
+export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
+  const websiteId = parseInt(params.websiteId);
+  const [website, setWebsite] = useState<Website | null>(null);
+  const [pages, setPages] = useState<Page[]>([]);
+  const [indexingStats, setIndexingStats] = useState<IndexingStats>({
+    total_pages: 0,
+    indexed_pages: 0,
+    not_indexed_pages: 0
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const setGlobalError = useError();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  useEffect(() => {
+    const fetchWebsiteDetails = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const websiteResponse = await fetch(`/api/websites/${websiteId}`);
+        const pagesResponse = await fetch(`/api/websites/${websiteId}/pages`);
+
+        if (!websiteResponse.ok || !pagesResponse.ok) {
+          throw new Error('Failed to fetch website details');
+        }
+
+        const websiteData = await websiteResponse.json();
+        const pagesData = await pagesResponse.json();
+
+        if (!websiteData) {
+          setError('Website not found');
+          return;
+        }
+
+        setWebsite(websiteData);
+        setPages(pagesData.pages || []);
+
+        // Calculate indexing stats
+        const totalPages = pagesData.pages ? pagesData.pages.length : 0;
+        const indexedPages = pagesData.pages ? pagesData.pages.filter((page: Page) => page.indexing_status === indexed).length : 0;
+        const notIndexedPages = totalPages - indexedPages;
+
+        setIndexingStats({
+          total_pages: totalPages,
+          indexed_pages: indexedPages,
+          not_indexed_pages: notIndexedPages
+        });
+
+      } catch (err) {
+        console.error('Error fetching website details:', err);
+        setError('An error occurred while fetching website details');
+        setGlobalError('Failed to load website details. Please try again later.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchWebsiteDetails();
+  }, [websiteId, setGlobalError]);
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
+        <Alert severity="error">{error}</Alert>
+      </Box>
+    );
+  }
+
+  if (!website) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
+        <Alert severity="warning">Website not found</Alert>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ flexGrow: 1, p: 3 }}>
+      <Typography variant="h4" gutterBottom>
+        {website.domain}
+      </Typography>
+
+      <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
+        <Grid container spacing={2}>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="subtitle1">Total Pages</Typography>
+            <Typography variant="h6">{indexingStats.total_pages}</Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="subtitle1">Indexed Pages</Typography>
+            <Typography variant="h6">{indexingStats.indexed_pages}</Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="subtitle1">Not Indexed Pages</Typography>
+            <Typography variant="h6">{indexingStats.not_indexed_pages}</Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="subtitle1">Auto-indexing</Typography>
+            <Typography variant="h6">{website.indexing_enabled ? 'Enabled' : 'Disabled'}</Typography>
+          </Grid>
+        </Grid>
+      </Paper>
+
+      <Typography variant="h5" gutterBottom>
+        Pages
+      </Typography>
+      
+      {pages.length > 0 ? (
+        <TableContainer component={Paper}>
+          <Table sx={{ minWidth: 300 }} aria-label="website pages table">
+            <TableHead>
+              <TableRow>
+                <TableCell>URL</TableCell>
+                {!isMobile && <TableCell>Status</TableCell>}
+                <TableCell>Last Indexed</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {pages.map((page) => (
+                <TableRow key={page.id}>
+                  <TableCell component="th" scope="row" sx={{
+                    maxWidth: isMobile ? 150 : 300,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {page.url}
+                  </TableCell>
+                  {!isMobile && (
+                    <TableCell>
+                      {page.indexing_status === indexed ? 'Indexed' : 'Not Indexed'}
+                    </TableCell>
+                  )}
+                  <TableCell>
+                    {isMobile && (
+                      <Typography variant="body2" color="text.secondary">
+                        {page.indexing_status === indexed ? 'Indexed' : 'Not Indexed'}
+                      </Typography>
+                    )}
+                    {page.last_indexed_date 
+                      ? new Date(page.last_indexed_date).toLocaleString() 
+                      : 'Never'
+                    }
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      ) : (
+        <Alert severity="info">No pages found for this website.</Alert>
+      )}
+    </Box>
+  );
+}
 
 // Filename: combine.js
 const fs = require('fs');
@@ -790,65 +1083,27 @@ const ErrorHandler: React.FC<ErrorHandlerProps> = ({ error, onClose }) => {
 
 export default ErrorHandler;
 
-// Filename: components/IndexingProgress.tsx
-import React, { useState, useEffect } from 'react';
-import { Box, Typography, LinearProgress } from '@mui/material';
-
-interface IndexingStats {
-  totalPages: number;
-  indexedPages: number;
-}
-
-const IndexingProgress: React.FC = () => {
-  const [stats, setStats] = useState<IndexingStats>({ totalPages: 0, indexedPages: 0 });
-
-  useEffect(() => {
-    fetchIndexingStats();
-  }, []);
-
-  const fetchIndexingStats = async () => {
-    try {
-      const response = await fetch('/api/indexing/stats');
-      const data = await response.json();
-      setStats(data);
-    } catch (error) {
-      console.error('Error fetching indexing stats:', error);
-    }
-  };
-
-  const progress = stats.totalPages > 0 ? (stats.indexedPages / stats.totalPages) * 100 : 0;
-
-  return (
-    <Box>
-      <Typography variant="h6" gutterBottom>
-        Indexing Progress
-      </Typography>
-      <LinearProgress variant="determinate" value={progress} />
-      <Typography variant="body2" color="textSecondary">
-        {stats.indexedPages} / {stats.totalPages} pages indexed
-      </Typography>
-    </Box>
-  );
-};
-
-export default IndexingProgress;
-
 // Filename: components/Navigation.tsx
-// File: components/Navigation.tsx
 'use client';
 
-import { AppBar, Toolbar, Typography, Button } from '@mui/material';
+import React from 'react';
+import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 
-export default function Navigation() {
+interface NavigationProps {
+  children?: React.ReactNode;
+}
+
+const Navigation: React.FC<NavigationProps> = ({ children }) => {
   const { data: session } = useSession();
 
   return (
-    <AppBar position="static">
+    <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
       <Toolbar>
+        {children}
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          <Link href="/" passHref>
+          <Link href="/" passHref style={{ color: 'inherit', textDecoration: 'none' }}>
             Website Indexer
           </Link>
         </Typography>
@@ -869,7 +1124,119 @@ export default function Navigation() {
       </Toolbar>
     </AppBar>
   );
+};
+
+Navigation.Offset = () => (
+  <Box sx={{ minHeight: (theme) => theme.mixins.toolbar.minHeight }} />
+);
+
+export default Navigation;
+
+// Filename: components/Sidebar.tsx
+import React, { useState, useEffect } from 'react';
+import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, Divider, CircularProgress } from '@mui/material';
+import { Dashboard as DashboardIcon, Web as WebIcon } from '@mui/icons-material';
+import Link from 'next/link';
+import { Website } from '@/types';
+
+interface SidebarProps {
+  open: boolean;
 }
+
+const Sidebar: React.FC<SidebarProps> = ({ open }) => {
+  const [websites, setWebsites] = useState<Website[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchWebsites();
+  }, []);
+
+  const fetchWebsites = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/websites');
+      if (!response.ok) {
+        throw new Error('Failed to fetch websites');
+      }
+      const data = await response.json();
+      setWebsites(data.filter((website: Website) => website.indexing_enabled));
+    } catch (error) {
+      console.error('Error fetching websites:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const extractDomain = (input: string): string => {
+    if (!input) return 'Unknown Domain';
+    
+    let domain = input.replace(/^sc-domain:/, '');
+    domain = domain.replace(/^(https?:\/\/)?(www\.)?/, '');
+    domain = domain.split('/')[0].split('?')[0];
+    
+    return domain;
+  };
+
+  return (
+    <Box
+      component="nav"
+      sx={{
+        width: { sm: open ? 240 : 0 },
+        flexShrink: { sm: 0 },
+      }}
+    >
+      <Drawer
+        variant="permanent"
+        open={open}
+        sx={{
+          display: { xs: 'none', sm: 'block' },
+          '& .MuiDrawer-paper': {
+            boxSizing: 'border-box',
+            width: 240,
+            top: ['64px', '64px', '64px'],
+            height: 'calc(100% - 64px)',
+            backgroundColor: '#f5f5f5',
+          },
+        }}
+      >
+        <List>
+          <ListItem component={Link} href="/dashboard">
+            <ListItemIcon>
+              <DashboardIcon />
+            </ListItemIcon>
+            <ListItemText primary="Dashboard" />
+          </ListItem>
+        </List>
+        <Divider />
+        <List>
+          <ListItem>
+            <ListItemText primary="Enabled Websites" />
+          </ListItem>
+          {loading ? (
+            <ListItem>
+              <CircularProgress size={24} />
+            </ListItem>
+          ) : (
+            websites.map((website) => (
+              <ListItem
+                key={website.id}
+                component={Link}
+                href={`/website/${website.id}`}
+              >
+                <ListItemIcon>
+                  <WebIcon />
+                </ListItemIcon>
+                <ListItemText primary={extractDomain(website.domain)} />
+              </ListItem>
+            ))
+          )}
+        </List>
+      </Drawer>
+    </Box>
+  );
+};
+
+export default Sidebar;
 
 // Filename: components/WebsiteList.tsx
 import React from 'react';
@@ -914,7 +1281,7 @@ const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, o
       </Button>
       <List>
         {websites.map((website) => (
-          <ListItem key={website.id}>
+          <ListItem key={website.id} component="div">
             <ListItemText 
               primary={website.domain}
               secondary={`Last scanned: ${formatLastScanned(website.last_robots_scan)}`}
@@ -1086,13 +1453,26 @@ export async function getGA4AnalyticsSummary(propertyId: string, dataStreamId: s
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { getWebsitesByUserId, createWebsite, updateWebsite } from '@/models';
+import { IndexingStatus } from '@/types';
 import CONFIG from '@/config';
-import { Website } from '@/types';
 
 const oauth2Client = new OAuth2Client(
   CONFIG.google.clientId,
   CONFIG.google.clientSecret
 );
+
+async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any>, rateLimit: number) {
+  const results = [];
+  for (let i = 0; i < items.length; i += rateLimit) {
+    const batch = items.slice(i, i + rateLimit);
+    const batchResults = await Promise.all(batch.map(fetchFn));
+    results.push(...batchResults);
+    if (i + rateLimit < items.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between batches
+    }
+  }
+  return results;
+}
 
 function cleanDomain(inputDomain: string): string {
   let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
@@ -1122,7 +1502,8 @@ export async function fetchAndStoreWebsites(userId: number, accessToken: string)
 
     if (sites.data.siteEntry) {
       for (const site of sites.data.siteEntry) {
-        const domain = cleanDomain(site.siteUrl);
+        //const domain = cleanDomain(site.siteUrl);
+        const domain = site.siteUrl;
         const ga4Data = await fetchGA4Data(analytics, domain);
 
         const existingWebsite = existingWebsites.find(w => w.domain === domain);
@@ -1203,6 +1584,51 @@ async function fetchGA4Data(analytics: any, domain: string) {
   } catch (error) {
     console.error(`Error fetching GA4 data for ${domain}:`, error);
     return { propertyId: null, dataStreamId: null };
+  }
+}
+
+export async function fetchBulkIndexingStatus(websiteId: number, domain: string, accessToken: string, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
+  oauth2Client.setCredentials({
+    access_token: accessToken,
+  });
+
+  const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
+
+  try {
+    const fetchUrl = async (url: string) => {
+      try {
+        const response = await searchconsole.urlInspection.index.inspect({
+          requestBody: {
+            inspectionUrl: url,
+            siteUrl: domain,
+          },
+        });
+
+        const result = response.data.inspectionResult;
+        return {
+          url: url,
+          lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
+          //indexingStatus: result?.indexStatusResult?.indexingState === 'INDEXED' ? 'indexed' : 'not_indexed' as IndexingStatus
+          indexingStatus: result?.indexStatusResult?.coverageState
+        };
+      } catch (error) {
+        console.error(`Error inspecting URL ${url}:`, error);
+        return {
+          url: url,
+          lastIndexedDate: null,
+          indexingStatus: 'error' as IndexingStatus
+        };
+      }
+    };
+
+    // Use rateLimitedFetch to process URLs with rate limiting
+    const results = await rateLimitedFetch(urls, fetchUrl, 100); // Process 100 URLs per second
+
+    return results;
+
+  } catch (error) {
+    console.error('Error fetching indexing status:', error);
+    throw error;
   }
 }
 
@@ -1287,16 +1713,30 @@ import axios from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import jobQueue from '@/lib/jobQueue';
+import { Website, IndexingStatus } from '@/types';
 import { 
   getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
   updateWebsiteRobotsScan, 
   getWebsiteById 
 } from '@/models';
-import { Website } from '@/types';
+import { fetchBulkIndexingStatus } from './googleSearchConsole';
+import { getValidAccessToken } from './tokenManager';
 import { ValidationError } from '@/utils/errors';
 
 const parseXml = promisify(parseString);
+
+function cleanDomain(inputDomain: string): string {
+  let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
+  try {
+    const url = new URL(cleanedDomain);
+    cleanedDomain = url.hostname;
+  } catch {
+    // If it's not a valid URL, assume it's already just a domain
+  }
+  cleanedDomain = cleanedDomain.replace(/^www\./, '');
+  return cleanedDomain;
+}
 
 // Function to queue the website processing as background jobs
 export async function scheduleSitemapProcessing(): Promise<void> {
@@ -1313,21 +1753,22 @@ export async function scheduleSitemapProcessing(): Promise<void> {
 // Function to process a single website, called as part of the background job
 export async function processSingleWebsite(website: Website): Promise<void> {
   try {
-    const robotsTxtUrl = `https://${website.domain}/robots.txt`;
+    const cleanedDomain = cleanDomain(website.domain);
+    const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
     const allSitemapUrls = extractSitemapUrls(robotsTxtContent);
     const filteredSitemapUrls = filterSitemaps(allSitemapUrls);
 
     let totalPages = 0;
     for (const sitemapUrl of filteredSitemapUrls) {
-      const pageCount = await processSitemap(website.id, sitemapUrl);
+      const pageCount = await processSitemap(website.id, website.domain, sitemapUrl, website.user_id);
       totalPages += pageCount;
     }
 
-    console.log(`Processed ${totalPages} pages for ${website.domain}`);
+    console.log(`Processed ${totalPages} pages for ${cleanedDomain}`);
     await updateWebsiteRobotsScan(website.id);
   } catch (error) {
-    console.error(`Error processing website ${website.domain}:`, error);
+    console.error(`Error processing website ${cleanDomain(website.domain)}:`, error);
   }
 }
 
@@ -1364,12 +1805,29 @@ function filterSitemaps(sitemapUrls: string[]): string[] {
   });
 }
 
-// Function to process a single sitemap and extract URLs
-async function processSitemap(websiteId: number, sitemapUrl: string): Promise<number> {
+async function processSitemap(websiteId: number, domain: string, sitemapUrl: string, userId: number): Promise<number> {
   try {
     const sitemapContent = await fetchUrl(sitemapUrl);
     const pages = await parseSitemap(sitemapContent);
-    await addOrUpdatePagesFromSitemap(websiteId, pages);
+    
+    const urls = pages.map(page => page.url);
+
+    // Fetch the actual indexing status and last indexed date from Google Search Console
+    const accessToken = await getValidAccessToken(userId);
+    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, urls);
+
+    // Combine sitemap data with indexing data
+    const formattedPages = pages.map(page => {
+      const indexedPage = indexedPages.find(ip => ip.url === page.url);
+      return {
+        url: page.url,
+        lastIndexedDate: indexedPage?.lastIndexedDate || null,
+        indexingStatus: indexedPage?.indexingStatus || 'not_indexed' as IndexingStatus
+      };
+    });
+
+    await addOrUpdatePagesFromSitemap(websiteId, formattedPages);
+
     return pages.length;
   } catch (error) {
     console.error(`Error processing sitemap ${sitemapUrl}:`, error);
@@ -2260,16 +2718,6 @@ export async function createEmailNotification(notification: Partial<EmailNotific
     const query = 'SELECT * FROM create_email_notification($1, $2, $3, $4)';
     const result = await pool.query(query, [user_id, website_id, type, content]);
     return { notification: result.rows[0], statusCode: 201 };
-  } catch (error) {
-    handleDatabaseError(error);
-  }
-}
-
-export async function getWebsiteIndexingStats(websiteId: number): Promise<{ stats: { total_pages: number, indexed_pages: number, pending_pages: number, not_indexed_pages: number }, statusCode: number }> {
-  try {
-    const query = 'SELECT * FROM get_website_indexing_stats($1)';
-    const result = await pool.query(query, [websiteId]);
-    return { stats: result.rows[0], statusCode: 200 };
   } catch (error) {
     handleDatabaseError(error);
   }

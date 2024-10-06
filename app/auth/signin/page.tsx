@@ -1,7 +1,6 @@
-// File: app/auth/signin/page.tsx
 'use client';
 
-import { Box, Typography, Button } from '@mui/material';
+import { Box, Typography, Button, useMediaQuery, Theme } from '@mui/material';
 import Image from "next/image";
 import { signIn } from 'next-auth/react';
 import { Google as GoogleIcon } from '@mui/icons-material';
@@ -9,26 +8,43 @@ import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
+  const isMobile = useMediaQuery((theme: Theme) => theme.breakpoints.down('sm'));
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center' }}>
+    <Box sx={{ 
+      display: 'flex', 
+      flexDirection: isMobile ? 'column' : 'row',
+      height: '100vh',
+    }}>
       {/* Left side with image */}
-      <Box sx={{ flex: 1, position: 'relative' }}>
+      <Box sx={{ 
+        flex: isMobile ? 'none' : 1, 
+        position: 'relative',
+        height: isMobile ? '30vh' : '100vh',
+      }}>
         <Image
           src="/images/background.webp"
           alt="Website Indexer"
           priority
-          width={1024}
-          height={1300}
+          layout="fill"
+          objectFit="cover"
         />
       </Box>
 
       {/* Right side with login form */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', p: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
+      <Box sx={{ 
+        flex: isMobile ? 'none' : 1, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        p: 4,
+        height: isMobile ? '70vh' : '100vh',
+      }}>
+        <Typography variant="h4" component="h1" gutterBottom align="center">
           Website Indexer
         </Typography>
-        <Typography variant="h6" component="h2" gutterBottom>
+        <Typography variant="h6" component="h2" gutterBottom align="center">
           Inicia sesión o regístrate
         </Typography>
 

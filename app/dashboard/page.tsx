@@ -76,6 +76,21 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const extractDomain = (input: string): string => {
+    if (!input) return 'Unknown Domain';
+    
+    // Remove 'sc-domain:' prefix if present
+    let domain = input.replace(/^sc-domain:/, '');
+    
+    // Remove protocol and www if present
+    domain = domain.replace(/^(https?:\/\/)?(www\.)?/, '');
+    
+    // Remove path and query string if present
+    domain = domain.split('/')[0].split('?')[0];
+    
+    return domain;
+  };
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
@@ -91,7 +106,10 @@ const Dashboard: React.FC = () => {
       </Typography>
       {websites && (
         <WebsiteList 
-          websites={websites} 
+          websites={websites.map(website => ({
+            ...website,
+            displayDomain: extractDomain(website.domain)
+          }))} 
           onToggleIndexing={handleToggleIndexing}
           onRefresh={handleRefresh}
         />

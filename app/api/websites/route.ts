@@ -1,4 +1,3 @@
-// api/websites/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -16,5 +15,5 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const userId = parseInt(session.user.id);
   const { websites } = await getWebsitesByUserId(userId);
 
-  return NextResponse.json(websites);
+  return NextResponse.json(websites || []);
 });

@@ -284,16 +284,6 @@ export async function createEmailNotification(notification: Partial<EmailNotific
   }
 }
 
-export async function getWebsiteIndexingStats(websiteId: number): Promise<{ stats: { total_pages: number, indexed_pages: number, pending_pages: number, not_indexed_pages: number }, statusCode: number }> {
-  try {
-    const query = 'SELECT * FROM get_website_indexing_stats($1)';
-    const result = await pool.query(query, [websiteId]);
-    return { stats: result.rows[0], statusCode: 200 };
-  } catch (error) {
-    handleDatabaseError(error);
-  }
-}
-
 export async function startIndexingJob(websiteId: number, batchSize: number): Promise<{ statusCode: number }> {
   try {
     const query = 'CALL start_indexing_job($1, $2)';

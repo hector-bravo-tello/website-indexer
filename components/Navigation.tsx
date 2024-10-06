@@ -1,18 +1,23 @@
-// File: components/Navigation.tsx
 'use client';
 
-import { AppBar, Toolbar, Typography, Button } from '@mui/material';
+import React from 'react';
+import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 
-export default function Navigation() {
+interface NavigationProps {
+  children?: React.ReactNode;
+}
+
+const Navigation: React.FC<NavigationProps> = ({ children }) => {
   const { data: session } = useSession();
 
   return (
-    <AppBar position="static">
+    <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
       <Toolbar>
+        {children}
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          <Link href="/" passHref>
+          <Link href="/" passHref style={{ color: 'inherit', textDecoration: 'none' }}>
             Website Indexer
           </Link>
         </Typography>
@@ -33,4 +38,10 @@ export default function Navigation() {
       </Toolbar>
     </AppBar>
   );
-}
+};
+
+Navigation.Offset = () => (
+  <Box sx={{ minHeight: (theme) => theme.mixins.toolbar.minHeight }} />
+);
+
+export default Navigation;
