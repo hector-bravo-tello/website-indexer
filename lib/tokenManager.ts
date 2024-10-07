@@ -53,12 +53,20 @@ async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
     oauth2Client.setCredentials({ refresh_token: refreshToken });
 
     const { tokens } = await oauth2Client.refreshAccessToken();
-    const accessToken = tokens.access_token!;
-    const expiresAt = new Date(Date.now() + (tokens.expiry_date! - Date.now())).toISOString();
+    
+    if (!tokens || !tokens.access_token) {
+      throw new TokenError('Failed to refresh access token: No tokens received');
+    }
+
+    const accessToken = tokens.access_token;
+    const newRefreshToken = tokens.refresh_token || refreshToken; // Use the new refresh token if provided, otherwise keep the old one
+    const expiresAt = tokens.expiry_date 
+      ? new Date(tokens.expiry_date).toISOString()
+      : new Date(Date.now() + 3600 * 1000).toISOString(); // Default to 1 hour from now if expiry_date is not provided
 
     return {
       access_token: accessToken,
-      refresh_token: tokens.refresh_token || refreshToken, // Use the new refresh token if provided, otherwise keep the old one
+      refresh_token: newRefreshToken,
       expires_at: expiresAt,
     };
   } catch (error: any) {

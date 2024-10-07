@@ -38,10 +38,12 @@ const IndexingStats: React.FC<IndexingStatsProps> = ({ websiteId }) => {
     }
   };
 
+  /*
   if (loading) {
     return <CircularProgress />;
   }
-
+  */
+ 
   if (error) {
     return <Alert severity="error">{error}</Alert>;
   }
