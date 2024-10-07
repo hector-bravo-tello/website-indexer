@@ -22,7 +22,7 @@ export interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps) {
   const [error, setError] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(240); // Initial sidebar width
+  const [sidebarWidth, setSidebarWidth] = useState(280); // Initial sidebar width
   const pathname = usePathname();
   const isSignInPage = pathname === '/auth/signin';
 

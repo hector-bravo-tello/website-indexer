@@ -1,7 +1,7 @@
 // File: models/index.ts
 
 import pool from '../lib/db';
-import { Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, JobStatus } from '@/types';
+import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData } from '@/types';
 import { DatabaseError } from '@/utils/errors';
 
 // Helper function to handle database errors
@@ -101,6 +101,16 @@ export async function getWebsiteById(id: number): Promise<{ website: Website | n
     const query = 'SELECT * FROM websites WHERE id = $1';
     const result = await pool.query(query, [id]);
     return { website: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getIndexingStatsByWebsiteId(id: number): Promise<{ indexingStats: IndexingStatsData | null, statusCode: number}> {
+  try {
+    const query = 'SELECT * FROM get_indexing_stats($1)';
+    const result = await pool.query(query, [id]);
+    return { indexingStats: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
   } catch (error) {
     handleDatabaseError(error);
   }

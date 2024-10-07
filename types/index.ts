@@ -79,3 +79,9 @@ export interface EmailNotification {
 }
 
 export type NotificationType = 'indexing_complete' | 'indexing_failed' | 'new_page_found';
+
+export interface IndexingStatsData {
+  total_pages: number;
+  indexed_pages: number;
+  not_indexed_pages: number;
+}

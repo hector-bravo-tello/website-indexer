@@ -11,28 +11,16 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Grid,
   CircularProgress,
   Alert,
-  useTheme,
-  useMediaQuery,
   TablePagination,
   TableSortLabel,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
-
-interface IndexingStats {
-  total_pages: number;
-  indexed_pages: number;
-  not_indexed_pages: number;
-}
-
-const indexed: string = 'Submitted and indexed';
+import IndexingStats from '@/components/IndexingStats';
 
 type Order = 'asc' | 'desc';
 
@@ -50,19 +38,14 @@ const headCells: HeadCell[] = [
 
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
-  const [website, setWebsite] = useState<Website | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
-  const [indexingStats, setIndexingStats] = useState<IndexingStats>({
-    total_pages: 0,
-    indexed_pages: 0,
-    not_indexed_pages: 0,
-  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order>('asc');
   const [orderBy, setOrderBy] = useState<keyof Page>('url');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [hasMore, setHasMore] = useState(true);
 
   const setGlobalError = useError();
   const theme = useTheme();
@@ -77,34 +60,15 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       setLoading(true);
       setError(null);
 
-      const websiteResponse = await fetch(`/api/websites/${websiteId}`);
       const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?page=${page}&pageSize=${rowsPerPage}&orderBy=${orderBy}&order=${order}`);
 
-      if (!websiteResponse.ok || !pagesResponse.ok) {
+      if (!pagesResponse.ok) {
         throw new Error('Failed to fetch website details');
       }
 
-      const websiteData = await websiteResponse.json();
       const pagesData = await pagesResponse.json();
-
-      if (!websiteData) {
-        setError('Website not found');
-        return;
-      }
-
-      setWebsite(websiteData);
       setPages(pagesData.pages || []);
-
-      // Calculate indexing stats
-      const totalPages = pagesData.pages ? pagesData.pages.length : 0;
-      const indexedPages = pagesData.pages ? pagesData.pages.filter((page: Page) => page.indexing_status === indexed).length : 0;
-      const notIndexedPages = totalPages - indexedPages;
-
-      setIndexingStats({
-        total_pages: totalPages,
-        indexed_pages: indexedPages,
-        not_indexed_pages: notIndexedPages,
-      });
+      setHasMore(pagesData.pages.length === rowsPerPage);
     } catch (err) {
       console.error('Error fetching website details:', err);
       setError('An error occurred while fetching website details');
@@ -118,6 +82,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     const isAsc = orderBy === property && order === 'asc';
     setOrder(isAsc ? 'desc' : 'asc');
     setOrderBy(property);
+    setPage(0);
   };
 
   const handleChangePage = (event: unknown, newPage: number) => {
@@ -129,7 +94,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     setPage(0);
   };
 
-  if (loading) {
+  if (loading && page === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
         <CircularProgress />
@@ -145,40 +110,13 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     );
   }
 
-  if (!website) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
-        <Alert severity="warning">Website not found</Alert>
-      </Box>
-    );
-  }
-
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
       <Typography variant="h4" gutterBottom>
-        {website.domain}
+        Website Details
       </Typography>
 
-      <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
-        <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Total Pages</Typography>
-            <Typography variant="h6">{indexingStats.total_pages}</Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Indexed Pages</Typography>
-            <Typography variant="h6">{indexingStats.indexed_pages}</Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Not Indexed Pages</Typography>
-            <Typography variant="h6">{indexingStats.not_indexed_pages}</Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Auto-indexing</Typography>
-            <Typography variant="h6">{website.indexing_enabled ? 'Enabled' : 'Disabled'}</Typography>
-          </Grid>
-        </Grid>
-      </Paper>
+      <IndexingStats websiteId={websiteId} />
 
       <Typography variant="h5" gutterBottom>
         Pages
@@ -224,27 +162,25 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       {page.url}
                     </TableCell>
                     <TableCell>
-                      {page.indexing_status === indexed ? 'Indexed' : 'Not Indexed'}
+                      {page.indexing_status}
                     </TableCell>
-                    <TableCell>
-                      {page.last_indexed_date
-                        ? new Date(page.last_indexed_date).toLocaleString()
-                        : 'Never'
-                      }
-                    </TableCell>
+                    <TableCell>{page.last_indexed_date}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
           <TablePagination
-            rowsPerPageOptions={[25, 50, 100]}
+            rowsPerPageOptions={[10, 25, 50]}
             component="div"
-            count={indexingStats.total_pages}
+            count={-1}
             rowsPerPage={rowsPerPage}
             page={page}
             onPageChange={handleChangePage}
             onRowsPerPageChange={handleChangeRowsPerPage}
+            nextIconButtonProps={{
+              disabled: !hasMore,
+            }}
           />
         </Paper>
       ) : (

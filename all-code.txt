@@ -144,6 +144,34 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return NextResponse.json(gscData);
 });
 
+// Filename: app/api/websites/[websiteId]/indexing-stats/route.ts
+// Filename: /app/api/websites/[websiteId]/indexing-stats/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getIndexingStatsByWebsiteId } from '@/models';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+      throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
+
+  if (isNaN(websiteId)) {
+    throw new NotFoundError('Invalid website ID');
+  }
+
+  const indexingStats = await getIndexingStatsByWebsiteId(websiteId);
+  return NextResponse.json({ indexingStats });
+});
+
+
 // Filename: app/api/websites/[websiteId]/pages/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
@@ -574,14 +602,15 @@ a {
 
 
 // Filename: app/layout.tsx
+// Filename: app/layout.tsx
+
 'use client';
 
 import React, { useState } from 'react';
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, IconButton } from '@mui/material';
-import MenuIcon from '@mui/icons-material/Menu';
+import { Box } from '@mui/material';
 import Navigation from '@/components/Navigation';
 import Sidebar from '@/components/Sidebar';
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -623,20 +652,25 @@ export default function RootLayout({ children }: RootLayoutProps) {
               <ErrorBoundary>
                 {!isSignInPage && (
                   <Box sx={{ display: 'flex', height: '100vh' }}>
-                    {/* Navigation */}
+                    {/* Navigation Bar */}
                     <Navigation sidebarWidth={sidebarWidth} onMenuClick={handleDrawerToggle} />
 
                     {/* Sidebar */}
-                    <Sidebar open={mobileOpen} onClose={handleDrawerToggle} onResize={handleSidebarResize} />
+                    <Sidebar
+                      open={mobileOpen}
+                      onClose={handleDrawerToggle}
+                      sidebarWidth={sidebarWidth}
+                      onSidebarResize={handleSidebarResize}
+                    />
 
-                    {/* Main Content */}
+                    {/* Main Content Area */}
                     <Box
                       component="main"
                       sx={{
                         flexGrow: 1,
                         p: 3,
                         width: { sm: `calc(100% - ${sidebarWidth}px)` },
-                        mt: '64px', // Adjust to avoid overlapping with the AppBar (Navigation)
+                        mt: '64px', // Offset for the AppBar (Navigation)
                       }}
                     >
                       {children}
@@ -690,6 +724,8 @@ const HomeClient: React.FC = () => {
 export default HomeClient;
 
 // Filename: app/website/[websiteId]/page.tsx
+// Filename: app/website/[websiteId]/page.tsx
+
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -703,28 +739,16 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Grid,
   CircularProgress,
   Alert,
-  useTheme,
-  useMediaQuery,
   TablePagination,
   TableSortLabel,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
-
-interface IndexingStats {
-  total_pages: number;
-  indexed_pages: number;
-  not_indexed_pages: number;
-}
-
-const indexed: string = 'Submitted and indexed';
+import IndexingStats from '@/components/IndexingStats';
 
 type Order = 'asc' | 'desc';
 
@@ -742,13 +766,7 @@ const headCells: HeadCell[] = [
 
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
-  const [website, setWebsite] = useState<Website | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
-  const [indexingStats, setIndexingStats] = useState<IndexingStats>({
-    total_pages: 0,
-    indexed_pages: 0,
-    not_indexed_pages: 0,
-  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order>('asc');
@@ -769,34 +787,14 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       setLoading(true);
       setError(null);
 
-      const websiteResponse = await fetch(`/api/websites/${websiteId}`);
       const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?page=${page}&pageSize=${rowsPerPage}&orderBy=${orderBy}&order=${order}`);
 
-      if (!websiteResponse.ok || !pagesResponse.ok) {
+      if (!pagesResponse.ok) {
         throw new Error('Failed to fetch website details');
       }
 
-      const websiteData = await websiteResponse.json();
       const pagesData = await pagesResponse.json();
-
-      if (!websiteData) {
-        setError('Website not found');
-        return;
-      }
-
-      setWebsite(websiteData);
       setPages(pagesData.pages || []);
-
-      // Calculate indexing stats
-      const totalPages = pagesData.pages ? pagesData.pages.length : 0;
-      const indexedPages = pagesData.pages ? pagesData.pages.filter((page: Page) => page.indexing_status === indexed).length : 0;
-      const notIndexedPages = totalPages - indexedPages;
-
-      setIndexingStats({
-        total_pages: totalPages,
-        indexed_pages: indexedPages,
-        not_indexed_pages: notIndexedPages,
-      });
     } catch (err) {
       console.error('Error fetching website details:', err);
       setError('An error occurred while fetching website details');
@@ -837,40 +835,14 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     );
   }
 
-  if (!website) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
-        <Alert severity="warning">Website not found</Alert>
-      </Box>
-    );
-  }
-
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
       <Typography variant="h4" gutterBottom>
-        {website.domain}
+        Website Details
       </Typography>
 
-      <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
-        <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Total Pages</Typography>
-            <Typography variant="h6">{indexingStats.total_pages}</Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Indexed Pages</Typography>
-            <Typography variant="h6">{indexingStats.indexed_pages}</Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Not Indexed Pages</Typography>
-            <Typography variant="h6">{indexingStats.not_indexed_pages}</Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="subtitle1">Auto-indexing</Typography>
-            <Typography variant="h6">{website.indexing_enabled ? 'Enabled' : 'Disabled'}</Typography>
-          </Grid>
-        </Grid>
-      </Paper>
+      {/* Display Indexing Stats */}
+      <IndexingStats websiteId={websiteId} />
 
       <Typography variant="h5" gutterBottom>
         Pages
@@ -916,23 +888,18 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       {page.url}
                     </TableCell>
                     <TableCell>
-                      {page.indexing_status === indexed ? 'Indexed' : 'Not Indexed'}
+                      {page.indexing_status === 'Submitted and indexed' ? 'Indexed' : 'Not Indexed'}
                     </TableCell>
-                    <TableCell>
-                      {page.last_indexed_date
-                        ? new Date(page.last_indexed_date).toLocaleString()
-                        : 'Never'
-                      }
-                    </TableCell>
+                    <TableCell>{page.last_indexed_date || 'N/A'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
           <TablePagination
-            rowsPerPageOptions={[25, 50, 100]}
+            rowsPerPageOptions={[10, 25, 50]}
             component="div"
-            count={indexingStats.total_pages}
+            count={pages.length}
             rowsPerPage={rowsPerPage}
             page={page}
             onPageChange={handleChangePage}
@@ -945,6 +912,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     </Box>
   );
 }
+
 
 // Filename: combine.js
 const fs = require('fs');
@@ -1120,7 +1088,85 @@ const ErrorHandler: React.FC<ErrorHandlerProps> = ({ error, onClose }) => {
 
 export default ErrorHandler;
 
+// Filename: components/IndexingStats.tsx
+// Filename: components/IndexingStats.tsx
+
+import React, { useState, useEffect } from 'react';
+import { Grid, Typography, Paper, CircularProgress, Alert } from '@mui/material';
+import { IndexingStatsData } from '@/types';
+
+interface IndexingStatsProps {
+  websiteId: number;
+}
+
+const IndexingStats: React.FC<IndexingStatsProps> = ({ websiteId }) => {
+  const [indexingStats, setIndexingStats] = useState<IndexingStatsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchIndexingStats();
+  }, [websiteId]);
+
+  const fetchIndexingStats = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`/api/websites/${websiteId}/indexing-stats`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch indexing stats');
+      }
+
+      const data = await response.json();
+      setIndexingStats(data.indexingStats?.indexingStats || null);
+
+    } catch (err) {
+      console.error('Error fetching indexing stats:', err);
+      setError('An error occurred while fetching indexing stats');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <CircularProgress />;
+  }
+
+  if (error) {
+    return <Alert severity="error">{error}</Alert>;
+  }
+
+  return (
+    <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
+      <Grid container spacing={2}>
+        <Grid item xs={12} sm={6} md={3}>
+          <Typography variant="subtitle1">Total Pages</Typography>
+          <Typography variant="h6">{indexingStats?.total_pages || 0}</Typography>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Typography variant="subtitle1">Indexed Pages</Typography>
+          <Typography variant="h6">{indexingStats?.indexed_pages || 0}</Typography>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Typography variant="subtitle1">Not Indexed Pages</Typography>
+          <Typography variant="h6">{indexingStats?.not_indexed_pages || 0}</Typography>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Typography variant="subtitle1">Auto-indexing</Typography>
+          <Typography variant="h6">Enabled</Typography>
+        </Grid>
+      </Grid>
+    </Paper>
+  );
+};
+
+export default IndexingStats;
+
+
 // Filename: components/Navigation.tsx
+// Filename: components/Navigation.tsx
+
 import React from 'react';
 import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -1154,7 +1200,7 @@ const Navigation: React.FC<NavigationProps> = ({ sidebarWidth, onMenuClick }) =>
           <MenuIcon />
         </IconButton>
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          {/* Empty space for alignment */}
+          {/* Placeholder for alignment */}
         </Typography>
         {session ? (
           <>
@@ -1175,6 +1221,8 @@ export default Navigation;
 
 
 // Filename: components/Sidebar.tsx
+// Filename: components/Sidebar.tsx
+
 import React, { useState, useEffect } from 'react';
 import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton, CircularProgress } from '@mui/material';
 import { Dashboard as DashboardIcon, Web as WebIcon, Close as CloseIcon } from '@mui/icons-material';
@@ -1185,12 +1233,13 @@ import { Website } from '@/types';
 interface SidebarProps {
   open: boolean;
   onClose?: () => void;
+  sidebarWidth: number;
+  onSidebarResize: (newWidth: number) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSidebarResize }) => {
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(280); // Increased sidebar width
 
   useEffect(() => {
     fetchWebsites();
@@ -1212,6 +1261,10 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
     }
   };
 
+  const extractDomainName = (domain: string) => {
+    return domain.replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     document.addEventListener('mousemove', handleMouseMove);
@@ -1219,7 +1272,8 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    setSidebarWidth(Math.max(200, e.clientX)); // Minimum width set to 200px
+    const newWidth = Math.max(200, e.clientX); // Set a minimum sidebar width
+    onSidebarResize(newWidth);
   };
 
   const handleMouseUp = () => {
@@ -1227,32 +1281,20 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
     document.removeEventListener('mouseup', handleMouseUp);
   };
 
-  const handleLinkClick = () => {
-    if (onClose) {
-      onClose();
-    }
-  };
-
-  // Utility function to extract clean domain names
-  const extractDomainName = (domain: string) => {
-    return domain.replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
-  };
-
   const drawerContent = (
     <Box sx={{ width: sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-      {/* Logo section with close button */}
       <Box
         sx={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center', // Center the logo
+          justifyContent: 'center',
           padding: 2,
-          height: '64px', // Match the height of the AppBar (Navigation)
+          height: '64px',
           position: 'relative',
         }}
       >
         <Link href="/" passHref>
-          <Image src="/images/logo.png" alt="App Logo" width={180} height={40} style={{ cursor: 'pointer' }} />
+          <Image src="/images/logo.png" alt="App Logo" width={180} height={40} style={{ cursor: 'pointer' }} priority />
         </Link>
         {onClose && (
           <IconButton onClick={onClose} sx={{ position: 'absolute', right: 8, display: { sm: 'none' } }}>
@@ -1261,10 +1303,9 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         )}
       </Box>
 
-      {/* Dashboard Link */}
       <List>
         <Link href="/dashboard" passHref legacyBehavior>
-          <ListItem button component="a" onClick={handleLinkClick}>
+          <ListItem button component="a">
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
@@ -1273,7 +1314,6 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         </Link>
       </List>
 
-      {/* Enabled Websites */}
       <List>
         <ListItem>
           <ListItemText primary="Enabled Websites" />
@@ -1285,7 +1325,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         ) : websites.length > 0 ? (
           websites.map((website) => (
             <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
-              <ListItem button component="a" onClick={handleLinkClick}>
+              <ListItem button component="a">
                 <ListItemIcon>
                   <WebIcon />
                 </ListItemIcon>
@@ -1300,9 +1340,10 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         )}
       </List>
 
-      {/* Resizable Handle */}
+      {/* Resizable handle only visible for desktop sidebar */}
       <Box
         sx={{
+          display: { xs: 'none', sm: 'block' }, // Only show on larger screens
           width: '5px',
           cursor: 'col-resize',
           position: 'absolute',
@@ -1324,13 +1365,11 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         variant="temporary"
         open={open}
         onClose={onClose}
-        ModalProps={{
-          keepMounted: true, // Better performance on mobile
-        }}
+        ModalProps={{ keepMounted: true }}
         sx={{
           display: { xs: 'block', sm: 'none' },
-          zIndex: (theme) => theme.zIndex.drawer + 2, // Ensure drawer is above the top bar in mobile
-          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' }, // Prevent scrollbars
+          zIndex: (theme) => theme.zIndex.drawer + 2,
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' },
         }}
       >
         {drawerContent}
@@ -1341,7 +1380,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         variant="permanent"
         sx={{
           display: { xs: 'none', sm: 'block' },
-          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' }, // Prevent scrollbars
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' },
         }}
         open
       >
@@ -2556,7 +2595,7 @@ export const withErrorHandling = <T>(handler: () => Promise<T>): Promise<T> => {
 // File: models/index.ts
 
 import pool from '../lib/db';
-import { Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, JobStatus } from '@/types';
+import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData } from '@/types';
 import { DatabaseError } from '@/utils/errors';
 
 // Helper function to handle database errors
@@ -2656,6 +2695,16 @@ export async function getWebsiteById(id: number): Promise<{ website: Website | n
     const query = 'SELECT * FROM websites WHERE id = $1';
     const result = await pool.query(query, [id]);
     return { website: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function getIndexingStatsByWebsiteId(id: number): Promise<{ indexingStats: IndexingStatsData | null, statusCode: number}> {
+  try {
+    const query = 'SELECT * FROM get_indexing_stats($1)';
+    const result = await pool.query(query, [id]);
+    return { indexingStats: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
   } catch (error) {
     handleDatabaseError(error);
   }
@@ -2978,6 +3027,11 @@ export interface EmailNotification {
 
 export type NotificationType = 'indexing_complete' | 'indexing_failed' | 'new_page_found';
 
+export interface IndexingStatsData {
+  total_pages: number;
+  indexed_pages: number;
+  not_indexed_pages: number;
+}
 
 // Filename: types/next-auth.d.ts
 import NextAuth from "next-auth"

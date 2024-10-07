@@ -1,7 +1,5 @@
-// Filename: components/Sidebar.tsx
-
 import React, { useState, useEffect } from 'react';
-import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton, CircularProgress } from '@mui/material';
+import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton, CircularProgress, useTheme, useMediaQuery } from '@mui/material';
 import { Dashboard as DashboardIcon, Web as WebIcon, Close as CloseIcon } from '@mui/icons-material';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -14,9 +12,13 @@ interface SidebarProps {
   onSidebarResize: (newWidth: number) => void;
 }
 
+const MOBILE_SIDEBAR_WIDTH = 280; // Fixed width for mobile
+
 const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSidebarResize }) => {
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   useEffect(() => {
     fetchWebsites();
@@ -43,12 +45,14 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (isMobile) return; // Disable resizing on mobile
     e.preventDefault();
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
 
   const handleMouseMove = (e: MouseEvent) => {
+    if (isMobile) return; // Disable resizing on mobile
     const newWidth = Math.max(200, e.clientX); // Set a minimum sidebar width
     onSidebarResize(newWidth);
   };
@@ -59,7 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
   };
 
   const drawerContent = (
-    <Box sx={{ width: sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+    <Box sx={{ width: isMobile ? MOBILE_SIDEBAR_WIDTH : sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
       <Box
         sx={{
           display: 'flex',
@@ -71,7 +75,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         }}
       >
         <Link href="/" passHref>
-          <Image src="/images/logo.png" alt="App Logo" width={180} height={40} style={{ cursor: 'pointer' }} />
+          <Image src="/images/logo.png" alt="App Logo" width={180} height={40} style={{ cursor: 'pointer' }} priority />
         </Link>
         {onClose && (
           <IconButton onClick={onClose} sx={{ position: 'absolute', right: 8, display: { sm: 'none' } }}>
@@ -118,25 +122,26 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
       </List>
 
       {/* Resizable handle only visible for desktop sidebar */}
-      <Box
-        sx={{
-          display: { xs: 'none', sm: 'block' }, // Only show on larger screens
-          width: '5px',
-          cursor: 'col-resize',
-          position: 'absolute',
-          right: 0,
-          top: 0,
-          height: '100vh',
-          zIndex: 1000,
-          backgroundColor: 'transparent',
-        }}
-        onMouseDown={handleMouseDown}
-      />
+      {!isMobile && (
+        <Box
+          sx={{
+            width: '5px',
+            cursor: 'col-resize',
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            height: '100vh',
+            zIndex: 1000,
+            backgroundColor: 'transparent',
+          }}
+          onMouseDown={handleMouseDown}
+        />
+      )}
     </Box>
   );
 
   return (
-    <Box component="nav" sx={{ width: { sm: sidebarWidth }, flexShrink: { sm: 0 } }}>
+    <Box component="nav" sx={{ width: { sm: isMobile ? MOBILE_SIDEBAR_WIDTH : sidebarWidth }, flexShrink: { sm: 0 } }}>
       {/* Mobile Sidebar */}
       <Drawer
         variant="temporary"
@@ -146,7 +151,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         sx={{
           display: { xs: 'block', sm: 'none' },
           zIndex: (theme) => theme.zIndex.drawer + 2,
-          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' },
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: MOBILE_SIDEBAR_WIDTH, overflow: 'hidden' },
         }}
       >
         {drawerContent}
