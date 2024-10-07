@@ -206,6 +206,16 @@ export async function getPagesByWebsiteId(
   }
 }
 
+export async function getPageById(id: number): Promise<{ page: Page | null, statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM pages WHERE id = $1';
+    const result = await pool.query(query, [id]);
+    return { page: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
 export async function createPage(page: Partial<Page>): Promise<{ page: Page, statusCode: number }> {
   try {
     const { website_id, url } = page;

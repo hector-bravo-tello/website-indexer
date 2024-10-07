@@ -11,7 +11,7 @@ export const authOptions: AuthOptions = {
       clientSecret: CONFIG.google.clientSecret as string,
       authorization: {
         params: {
-          scope: 'openid email profile https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly',
+          scope: 'openid email profile https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/indexing',
           access_type: 'offline',
           prompt: 'consent',
         }

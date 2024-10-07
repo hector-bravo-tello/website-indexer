@@ -17,15 +17,17 @@ import {
   TableSortLabel,
   useTheme,
   useMediaQuery,
+  Button,
 } from '@mui/material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
 import IndexingStats from '@/components/IndexingStats';
+import { getGA4AnalyticsData } from '@/lib/googleAnalytics';
 
 type Order = 'asc' | 'desc';
 
 interface HeadCell {
-  id: keyof Page;
+  id: keyof Page | 'impressions' | 'clicks' | 'actions';
   label: string;
   numeric: boolean;
 }
@@ -34,6 +36,9 @@ const headCells: HeadCell[] = [
   { id: 'url', label: 'URL', numeric: false },
   { id: 'indexing_status', label: 'Status', numeric: false },
   { id: 'last_indexed_date', label: 'Last Indexed', numeric: false },
+  { id: 'impressions', label: 'Impressions', numeric: true },
+  { id: 'clicks', label: 'Clicks', numeric: true },
+  { id: 'actions', label: 'Actions', numeric: false },
 ];
 
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
@@ -46,6 +51,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [hasMore, setHasMore] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});
 
   const setGlobalError = useError();
   const theme = useTheme();
@@ -69,6 +75,21 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       const pagesData = await pagesResponse.json();
       setPages(pagesData.pages || []);
       setHasMore(pagesData.pages.length === rowsPerPage);
+
+      // Fetch Impressions and Clicks
+      const urls = pagesData.pages.map((p: Page) => encodeURIComponent(p.url)); // Encode URLs to handle special characters
+      const analyticsResponse = await fetch(`/api/websites/${websiteId}/analytics?urls=${urls.join(',')}`);
+      if (!analyticsResponse.ok) {
+        throw new Error('Failed to fetch analytics data');
+      }
+      const analyticsData = await analyticsResponse.json();
+      setAnalyticsData(analyticsData.data);
+
+      console.log('Fetched pages data:', pagesData);
+      console.log('Fetched analytics data:', analyticsData);
+      console.log('Pages array length:', pagesData.pages.length);
+      console.log('First page:', pagesData.pages[0]);
+
     } catch (err) {
       console.error('Error fetching website details:', err);
       setError('An error occurred while fetching website details');
@@ -78,10 +99,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     }
   };
 
-  const handleRequestSort = (property: keyof Page) => {
+  const handleRequestSort = (property: keyof Page | 'impressions' | 'clicks') => {
     const isAsc = orderBy === property && order === 'asc';
     setOrder(isAsc ? 'desc' : 'asc');
-    setOrderBy(property);
+    setOrderBy(property as keyof Page);
     setPage(0);
   };
 
@@ -92,6 +113,24 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
+  };
+
+  const handleSubmitForIndexing = async (pageId: number) => {
+    try {
+      const response = await fetch(`/api/websites/${websiteId}/pages/${pageId}/submit-for-indexing`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to submit page for indexing');
+      }
+
+      // Refresh the page data
+      fetchWebsiteDetails();
+    } catch (err) {
+      console.error('Error submitting page for indexing:', err);
+      setGlobalError('Failed to submit page for indexing. Please try again later.');
+    }
   };
 
   if (loading && page === 0) {
@@ -152,19 +191,28 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       component="th"
                       scope="row"
                       sx={{
-                        maxWidth: isMobile ? 0 : 300,
+                        maxWidth: isMobile ? 150 : 300,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        display: isMobile ? 'none' : 'table-cell',
                       }}
                     >
                       {page.url}
                     </TableCell>
+                    <TableCell>{page.indexing_status}</TableCell>
+                    <TableCell>{new Date(page.last_indexed_date).toLocaleString()}</TableCell>
+                    <TableCell align="right">{analyticsData[page.url] ? analyticsData[page.url].impressions : 0}</TableCell>
+                    <TableCell align="right">{analyticsData[page.url] ? analyticsData[page.url].clicks : 0}</TableCell>
                     <TableCell>
-                      {page.indexing_status}
+                      <Button
+                        variant="contained"
+                        size="small"
+                        onClick={() => handleSubmitForIndexing(page.id)}
+                        disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                      >
+                        Submit
+                      </Button>
                     </TableCell>
-                    <TableCell>{page.last_indexed_date}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

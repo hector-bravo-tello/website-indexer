@@ -1,7 +1,8 @@
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import { getWebsitesByUserId, createWebsite, updateWebsite } from '@/models';
+import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite } from '@/models';
 import { IndexingStatus } from '@/types';
+import { fetchGA4Data } from './googleAnalytics';
 import CONFIG from '@/config';
 
 const oauth2Client = new OAuth2Client(
@@ -20,18 +21,6 @@ async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any
     }
   }
   return results;
-}
-
-function cleanDomain(inputDomain: string): string {
-  let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
-  try {
-    const url = new URL(cleanedDomain);
-    cleanedDomain = url.hostname;
-  } catch {
-    // If it's not a valid URL, assume it's already just a domain
-  }
-  cleanedDomain = cleanedDomain.replace(/^www\./, '');
-  return cleanedDomain;
 }
 
 export async function fetchAndStoreWebsites(userId: number, accessToken: string) {
@@ -88,53 +77,6 @@ export async function fetchAndStoreWebsites(userId: number, accessToken: string)
   }
 }
 
-async function fetchGA4Data(analytics: any, domain: string) {
-  try {
-    // List all GA4 properties
-    const propertiesResponse = await analytics.accountSummaries.list({
-      pageSize: 100  // Adjust this value based on the number of properties you expect
-    });
-    const properties = propertiesResponse.data.accountSummaries
-      .flatMap((account: any) => account.propertySummaries || [])
-      .filter((prop: any) => prop.property);
-
-    // Find the property that matches the domain
-    const property = properties.find((prop: any) => {
-      const propDisplayName = cleanDomain(prop.displayName);
-      const cleanedDomain = cleanDomain(domain);
-      return propDisplayName === cleanedDomain;
-    });
-
-    if (!property) {
-      console.log(`No matching GA4 property found for domain: ${domain}`);
-      return { propertyId: null, dataStreamId: null };
-    }
-
-    const propertyId = property.property.split('/').pop();
-
-    // List data streams for the found property
-    const dataStreamsResponse = await analytics.properties.dataStreams.list({
-      parent: `properties/${propertyId}`
-    });
-    const dataStreams = dataStreamsResponse.data.dataStreams || [];
-
-    // Find the first web data stream (or any if no web stream is found)
-    const dataStream = dataStreams.find((stream: any) => stream.type === 'WEB_DATA_STREAM') || dataStreams[0];
-
-    const dataStreamId = dataStream ? dataStream.name.split('/').pop() : null;
-
-    console.log(`Found GA4 data for ${domain}: Property ID: ${propertyId}, Data Stream ID: ${dataStreamId}`);
-
-    return {
-      propertyId: propertyId,
-      dataStreamId: dataStreamId
-    };
-  } catch (error) {
-    console.error(`Error fetching GA4 data for ${domain}:`, error);
-    return { propertyId: null, dataStreamId: null };
-  }
-}
-
 export async function fetchBulkIndexingStatus(websiteId: number, domain: string, accessToken: string, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
   oauth2Client.setCredentials({
     access_token: accessToken,
@@ -156,7 +98,6 @@ export async function fetchBulkIndexingStatus(websiteId: number, domain: string,
         return {
           url: url,
           lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
-          //indexingStatus: result?.indexStatusResult?.indexingState === 'INDEXED' ? 'indexed' : 'not_indexed' as IndexingStatus
           indexingStatus: result?.indexStatusResult?.coverageState
         };
       } catch (error) {
@@ -177,5 +118,82 @@ export async function fetchBulkIndexingStatus(websiteId: number, domain: string,
   } catch (error) {
     console.error('Error fetching indexing status:', error);
     throw error;
+  }
+}
+
+export async function submitUrlForIndexing(domain: string, url: string, accessToken: string): Promise<void> {
+  oauth2Client.setCredentials({
+    access_token: accessToken,
+  });
+
+  const indexing = google.indexing({ version: 'v3', auth: oauth2Client });
+
+  try {
+    await indexing.urlNotifications.publish({
+      requestBody: {
+        url: url,
+        type: 'URL_UPDATED',
+      },
+    });
+    console.log(`Submitted URL for indexing: ${url}`);
+  } catch (error) {
+    console.error(`Error submitting URL for indexing: ${url}`, error);
+    throw new Error('Failed to submit URL for indexing');
+  }
+}
+
+export async function getPageImpressionsAndClicks(websiteId: number, urls: string[], accessToken: string) {
+  const oauth2Client = new OAuth2Client();
+  oauth2Client.setCredentials({
+    access_token: accessToken,
+  });
+
+  const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
+
+  try {
+    const { website } = await getWebsiteById(websiteId);
+    if (!website) {
+      throw new Error('Website not found');
+    }
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 30); // Last 30 days
+    const endDate = new Date();
+
+    const response = await searchconsole.searchanalytics.query({
+      siteUrl: website.domain,
+      requestBody: {
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+        dimensions: ['page'],
+        rowLimit: urls.length,
+      },
+    });
+    //console.log('Response: ', response.data.rows);
+
+    const result: { [key: string]: { impressions: number, clicks: number } } = {};
+
+    // Initialize result with all input URLs set to zero impressions and clicks
+    urls.forEach(url => {
+      result[url] = { impressions: 0, clicks: 0 };
+    });
+
+    if (response.data.rows) {
+      response.data.rows.forEach((row: any) => {
+        const url = row.keys[0];
+        if (urls.includes(url)) {
+          result[url] = {
+            impressions: row.impressions,
+            clicks: row.clicks,
+          };
+        }
+      });
+    }
+    //console.log('Result: ', result);
+    return result;
+
+  } catch (error) {
+    console.error('Error fetching Search Console data:', error);
+    throw new Error('Failed to fetch Search Console data');
   }
 }
