@@ -1,3 +1,5 @@
+// Filename: components/Sidebar.tsx
+
 import React, { useState, useEffect } from 'react';
 import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton, CircularProgress } from '@mui/material';
 import { Dashboard as DashboardIcon, Web as WebIcon, Close as CloseIcon } from '@mui/icons-material';
@@ -8,12 +10,13 @@ import { Website } from '@/types';
 interface SidebarProps {
   open: boolean;
   onClose?: () => void;
+  sidebarWidth: number;
+  onSidebarResize: (newWidth: number) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSidebarResize }) => {
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(280); // Increased sidebar width
 
   useEffect(() => {
     fetchWebsites();
@@ -35,6 +38,10 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
     }
   };
 
+  const extractDomainName = (domain: string) => {
+    return domain.replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     document.addEventListener('mousemove', handleMouseMove);
@@ -42,7 +49,8 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    setSidebarWidth(Math.max(200, e.clientX)); // Minimum width set to 200px
+    const newWidth = Math.max(200, e.clientX); // Set a minimum sidebar width
+    onSidebarResize(newWidth);
   };
 
   const handleMouseUp = () => {
@@ -50,27 +58,15 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
     document.removeEventListener('mouseup', handleMouseUp);
   };
 
-  const handleLinkClick = () => {
-    if (onClose) {
-      onClose();
-    }
-  };
-
-  // Utility function to extract clean domain names
-  const extractDomainName = (domain: string) => {
-    return domain.replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
-  };
-
   const drawerContent = (
     <Box sx={{ width: sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-      {/* Logo section with close button */}
       <Box
         sx={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center', // Center the logo
+          justifyContent: 'center',
           padding: 2,
-          height: '64px', // Match the height of the AppBar (Navigation)
+          height: '64px',
           position: 'relative',
         }}
       >
@@ -84,10 +80,9 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         )}
       </Box>
 
-      {/* Dashboard Link */}
       <List>
         <Link href="/dashboard" passHref legacyBehavior>
-          <ListItem button component="a" onClick={handleLinkClick}>
+          <ListItem button component="a">
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
@@ -96,7 +91,6 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         </Link>
       </List>
 
-      {/* Enabled Websites */}
       <List>
         <ListItem>
           <ListItemText primary="Enabled Websites" />
@@ -108,7 +102,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         ) : websites.length > 0 ? (
           websites.map((website) => (
             <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
-              <ListItem button component="a" onClick={handleLinkClick}>
+              <ListItem button component="a">
                 <ListItemIcon>
                   <WebIcon />
                 </ListItemIcon>
@@ -123,9 +117,10 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         )}
       </List>
 
-      {/* Resizable Handle */}
+      {/* Resizable handle only visible for desktop sidebar */}
       <Box
         sx={{
+          display: { xs: 'none', sm: 'block' }, // Only show on larger screens
           width: '5px',
           cursor: 'col-resize',
           position: 'absolute',
@@ -147,13 +142,11 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         variant="temporary"
         open={open}
         onClose={onClose}
-        ModalProps={{
-          keepMounted: true, // Better performance on mobile
-        }}
+        ModalProps={{ keepMounted: true }}
         sx={{
           display: { xs: 'block', sm: 'none' },
-          zIndex: (theme) => theme.zIndex.drawer + 2, // Ensure drawer is above the top bar in mobile
-          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' }, // Prevent scrollbars
+          zIndex: (theme) => theme.zIndex.drawer + 2,
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' },
         }}
       >
         {drawerContent}
@@ -164,7 +157,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         variant="permanent"
         sx={{
           display: { xs: 'none', sm: 'block' },
-          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' }, // Prevent scrollbars
+          '& .MuiDrawer-paper': { boxSizing: 'border-box', width: sidebarWidth, overflow: 'hidden' },
         }}
         open
       >

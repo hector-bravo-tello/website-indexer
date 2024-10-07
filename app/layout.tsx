@@ -1,11 +1,12 @@
+// Filename: app/layout.tsx
+
 'use client';
 
 import React, { useState } from 'react';
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, IconButton } from '@mui/material';
-import MenuIcon from '@mui/icons-material/Menu';
+import { Box } from '@mui/material';
 import Navigation from '@/components/Navigation';
 import Sidebar from '@/components/Sidebar';
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -47,20 +48,25 @@ export default function RootLayout({ children }: RootLayoutProps) {
               <ErrorBoundary>
                 {!isSignInPage && (
                   <Box sx={{ display: 'flex', height: '100vh' }}>
-                    {/* Navigation */}
+                    {/* Navigation Bar */}
                     <Navigation sidebarWidth={sidebarWidth} onMenuClick={handleDrawerToggle} />
 
                     {/* Sidebar */}
-                    <Sidebar open={mobileOpen} onClose={handleDrawerToggle} onResize={handleSidebarResize} />
+                    <Sidebar
+                      open={mobileOpen}
+                      onClose={handleDrawerToggle}
+                      sidebarWidth={sidebarWidth}
+                      onSidebarResize={handleSidebarResize}
+                    />
 
-                    {/* Main Content */}
+                    {/* Main Content Area */}
                     <Box
                       component="main"
                       sx={{
                         flexGrow: 1,
                         p: 3,
                         width: { sm: `calc(100% - ${sidebarWidth}px)` },
-                        mt: '64px', // Adjust to avoid overlapping with the AppBar (Navigation)
+                        mt: '64px', // Offset for the AppBar (Navigation)
                       }}
                     >
                       {children}

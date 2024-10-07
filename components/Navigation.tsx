@@ -1,3 +1,5 @@
+// Filename: components/Navigation.tsx
+
 import React from 'react';
 import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -31,7 +33,7 @@ const Navigation: React.FC<NavigationProps> = ({ sidebarWidth, onMenuClick }) =>
           <MenuIcon />
         </IconButton>
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          {/* Empty space for alignment */}
+          {/* Placeholder for alignment */}
         </Typography>
         {session ? (
           <>
