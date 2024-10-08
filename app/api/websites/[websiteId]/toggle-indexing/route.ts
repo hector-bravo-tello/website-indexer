@@ -1,7 +1,9 @@
+// File: app/api/websites/[websiteId]/toggle-indexing/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { getWebsiteById, updateWebsite } from '@/models';
+import { getWebsiteById, updateWebsite, startIndexingJob } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 import jobQueue from '@/lib/jobQueue';
@@ -56,5 +58,38 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   } else {  
     message = 'Auto-indexing disabled.';
   }
-  return NextResponse.json({ website: updatedWebsite, message });
+
+  return NextResponse.json({ 
+    website: updatedWebsite, 
+    message,
+    initialScanTime: website.last_robots_scan?.toISOString()
+  });
+});
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.url.split('/').slice(-2)[0]);
+  const initialScanTime = request.nextUrl.searchParams.get('initialScanTime');
+
+  if (isNaN(websiteId) || !initialScanTime) {
+    throw new ValidationError('Invalid website ID or initial scan time');
+  }
+
+  const { website } = await getWebsiteById(websiteId);
+  
+  if (!website || website.user_id !== parseInt(session.user.id)) {
+    throw new NotFoundError('Website not found');
+  }
+
+  const isCompleted = website.last_robots_scan && new Date(website.last_robots_scan) > new Date(initialScanTime);
+
+  return NextResponse.json({ 
+    isCompleted,
+    lastScanTime: website.last_robots_scan?.toISOString()
+  });
 });

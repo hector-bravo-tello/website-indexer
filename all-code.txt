@@ -280,8 +280,6 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 });
 
 // Filename: app/api/websites/[websiteId]/toggle-indexing/route.ts
-// app/api/websites/[websiteId]/toggle-indexing/route.ts
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -319,24 +317,25 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new ValidationError('Invalid input: enabled must be a boolean');
   }
 
-  const isFirstTimeEnabled = !website.indexing_enabled && enabled;
+  const shouldRunJob = enabled && (
+    !website.last_robots_scan || 
+    new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000
+  );
+
   const { website: updatedWebsite } = await updateWebsite(websiteId, { indexing_enabled: enabled });
 
   let message = '';
   if (enabled) {
     message = 'Auto-indexing enabled.';
-    if (isFirstTimeEnabled) {
-      // If indexing is being enabled for the first time, start a background indexing job
+    if (shouldRunJob) {
       try {
-        // Enqueue the job for processing the sitemap in the background
         await jobQueue.addJob(websiteId);
         message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
       } catch (error) {
         console.error(`Failed to start indexing job for website ${websiteId}:`, error);
       }
     }
-  }
-  else {  
+  } else {  
     message = 'Auto-indexing disabled.';
   }
   return NextResponse.json({ website: updatedWebsite, message });
@@ -472,7 +471,8 @@ import {
   Typography, 
   Box, 
   CircularProgress, 
-  Snackbar, 
+  Snackbar,
+  Alert,
   Table, 
   TableBody, 
   TableCell, 
@@ -486,19 +486,33 @@ import {
   Switch
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
+import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { withAuth } from '@/components/withAuth';
 import { Website } from '@/types';
 import { useError } from '@/lib/useError';
 
+
 const Dashboard: React.FC = () => {
   const [websites, setWebsites] = useState<Website[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [orderBy, setOrderBy] = useState<keyof Website>('domain');
   const [order, setOrder] = useState<'asc' | 'desc'>('asc');
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
   const setError = useError();
+
+  const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
+    props,
+    ref,
+  ) {
+    return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
+  });
+  
 
   useEffect(() => {
     fetchWebsites();
@@ -539,10 +553,19 @@ const Dashboard: React.FC = () => {
           website.id === websiteId ? { ...website, indexing_enabled: !currentStatus } : website
         ) || null
       );
-      setMessage(data.message);
+      setSnackbar({
+        open: true,
+        message: data.message,
+        severity: 'success',
+      });
     } catch (error) {
       console.error('Error toggling indexing:', error);
       setError('Failed to update indexing status. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to update indexing status',
+        severity: 'error',
+      });
     }
   };
 
@@ -554,10 +577,19 @@ const Dashboard: React.FC = () => {
         throw new Error('Failed to refresh websites');
       }
       await fetchWebsites();
-      setMessage('Websites refreshed successfully');
+      setSnackbar({
+        open: true,
+        message: 'Websites refreshed successfully',
+        severity: 'success',
+      });
     } catch (error) {
       console.error('Error refreshing websites:', error);
       setError('Failed to refresh websites. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to refresh websites',
+        severity: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -716,11 +748,19 @@ const Dashboard: React.FC = () => {
         onRowsPerPageChange={handleChangeRowsPerPage}
       />
       <Snackbar
-        open={!!message}
+        open={snackbar.open}
         autoHideDuration={6000}
-        onClose={() => setMessage(null)}
-        message={message}
-      />
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 };
@@ -914,7 +954,6 @@ import {
   TableRow,
   Paper,
   CircularProgress,
-  Alert,
   TablePagination,
   TableSortLabel,
   useTheme,
@@ -923,7 +962,9 @@ import {
   Grid,
   Card,
   CardContent,
+  Snackbar,
 } from '@mui/material';
+import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { SyncAlt as SyncIcon } from '@mui/icons-material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
@@ -947,6 +988,16 @@ const headCells: HeadCell[] = [
   { id: 'actions', label: 'Actions', numeric: false, sortable: false },
 ];
 
+const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
+  props,
+  ref,
+) {
+  return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
+});
+
+const indexed: string = 'Submitted and indexed';
+
+
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
   const [website, setWebsite] = useState<Website | null>(null);
@@ -959,6 +1010,12 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [analyticsData, setAnalyticsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});
+  const [submitting, setSubmitting] = useState<number | null>(null);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
 
   const setGlobalError = useError();
   const theme = useTheme();
@@ -1025,6 +1082,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
   const handleSubmitForIndexing = async (pageId: number) => {
     try {
+      setSubmitting(pageId);
       const response = await fetch(`/api/websites/${websiteId}/pages/${pageId}/submit-for-indexing`, {
         method: 'POST',
       });
@@ -1033,11 +1091,26 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to submit page for indexing');
       }
 
+      const result = await response.json();
+      setGlobalError(null);
+      setSnackbar({
+        open: true,
+        message: result.message || 'Page submitted for indexing successfully',
+        severity: 'success',
+      });
+
       // Refresh the page data
       fetchWebsiteDetails();
     } catch (err) {
       console.error('Error submitting page for indexing:', err);
       setGlobalError('Failed to submit page for indexing. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to submit page for indexing',
+        severity: 'error',
+      });
+    } finally {
+      setSubmitting(null);
     }
   };
 
@@ -1055,16 +1128,26 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to sync pages');
       }
       await fetchWebsiteDetails();
+      setSnackbar({
+        open: true,
+        message: 'Pages syncing started',
+        severity: 'success',
+      });
     } catch (err) {
       console.error('Error syncing pages:', err);
       setGlobalError('Failed to sync pages. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to sync pages',
+        severity: 'error',
+      });
     } finally {
       setSyncing(false);
     }
   };
 
   const getSubmitButtonColor = (status: string) => {
-    return status !== 'Submitted and indexed' ? theme.palette.error.light : theme.palette.primary.main;
+    return status !== indexed ? theme.palette.error.light : theme.palette.primary.main;
   };
 
   const sortedAndPaginatedPages = useMemo(() => {
@@ -1158,7 +1241,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       variant="contained"
                       size="small"
                       onClick={() => handleSubmitForIndexing(page.id)}
-                      disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                      disabled={
+                        submitting === page.id ||
+                        new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000
+                      }
                       sx={{ 
                         mt: 1, 
                         backgroundColor: getSubmitButtonColor(page.indexing_status),
@@ -1167,7 +1253,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                         },
                       }}
                     >
-                      Submit
+                      {submitting === page.id ? <CircularProgress size={24} /> : 'Submit'}
                     </Button>
                   </CardContent>
                 </Card>
@@ -1224,39 +1310,57 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                           variant="contained"
                           size="small"
                           onClick={() => handleSubmitForIndexing(page.id)}
-                          disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                          disabled={
+                            submitting === page.id ||
+                            new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000
+                          }
                           sx={{ 
                             backgroundColor: getSubmitButtonColor(page.indexing_status),
                             '&:hover': {
                               backgroundColor: theme.palette.error.main,
                             },
                           }}
-                        >
-                          Submit
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-          <TablePagination
-            rowsPerPageOptions={[10, 25, 50, 100]}
-            component="div"
-            count={allPages.length}
-            rowsPerPage={rowsPerPage}
-            page={page}
-            onPageChange={handleChangePage}
-            onRowsPerPageChange={handleChangeRowsPerPage}
-          />
-        </Paper>
-      ) : (
-        <Alert severity="info">No pages found for this website.</Alert>
-      )}
-    </Box>
-  );
-}
+                          >
+                            {submitting === page.id ? <CircularProgress size={24} /> : 'Submit'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={allPages.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={handleChangePage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+            />
+          </Paper>
+        ) : (
+          <Alert severity="info">No pages found for this website.</Alert>
+        )}
+  
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={6000}
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert
+            onClose={() => setSnackbar({ ...snackbar, open: false })}
+            severity={snackbar.severity}
+            sx={{ width: '100%' }}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+      </Box>
+    );
+  }
 
 // Filename: combine.js
 const fs = require('fs');

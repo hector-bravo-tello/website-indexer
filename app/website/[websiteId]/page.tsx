@@ -1,3 +1,5 @@
+// File: app/website/[websiteId]/page.tsx
+
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -53,6 +55,8 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
   return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
 });
 
+const indexed: string = 'Submitted and indexed';
+
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
   const [website, setWebsite] = useState<Website | null>(null);
@@ -71,6 +75,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     message: '',
     severity: 'success',
   });
+  const [initialScanTime, setInitialScanTime] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollingAttempts, setPollingAttempts] = useState(0);
+  const MAX_POLLING_ATTEMPTS = 3;
 
   const setGlobalError = useError();
   const theme = useTheme();
@@ -172,6 +180,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const handleSyncPages = async () => {
     try {
       setSyncing(true);
+      setPollingAttempts(0);
       const response = await fetch(`/api/websites/${websiteId}/toggle-indexing`, {
         method: 'POST',
         headers: {
@@ -182,10 +191,12 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       if (!response.ok) {
         throw new Error('Failed to sync pages');
       }
-      await fetchWebsiteDetails();
+      const data = await response.json();
+      setInitialScanTime(data.initialScanTime);
+      setIsPolling(true);
       setSnackbar({
         open: true,
-        message: 'Pages synced successfully',
+        message: 'Sync pages started',
         severity: 'success',
       });
     } catch (err) {
@@ -201,8 +212,61 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     }
   };
 
+  const checkJobStatus = useCallback(async () => {
+    if (!initialScanTime) return;
+  
+    try {
+      const response = await fetch(`/api/websites/${websiteId}/toggle-indexing?initialScanTime=${initialScanTime}`);
+      if (!response.ok) {
+        throw new Error('Failed to check sync status');
+      }
+      const data = await response.json();
+      
+      if (data.isCompleted) {
+        setIsPolling(false);
+        await fetchWebsiteDetails();
+        setSnackbar({
+          open: true,
+          message: 'Pages sync completed',
+          severity: 'success',
+        });
+      } else {
+        setPollingAttempts(prevAttempts => prevAttempts + 1);
+        if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
+          setIsPolling(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking sync status:', error);
+      setIsPolling(false);
+      setSnackbar({
+        open: true,
+        message: 'Error checking sync status',
+        severity: 'error',
+      });
+    }
+  }, [initialScanTime, websiteId, fetchWebsiteDetails, pollingAttempts]);
+  
+  // Modify the useEffect hook for polling:
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+  
+    if (isPolling && pollingAttempts < MAX_POLLING_ATTEMPTS) {
+      intervalId = setInterval(checkJobStatus, 5000); // Poll every 5 seconds
+    } else if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
+      setIsPolling(false);
+    }
+  
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isPolling, checkJobStatus, pollingAttempts]);
+
+
   const getSubmitButtonColor = (status: string) => {
-    return status !== 'Submitted and indexed' ? theme.palette.error.light : theme.palette.primary.main;
+    return status !== indexed ? theme.palette.error.light : theme.palette.primary.main;
   };
 
   const sortedAndPaginatedPages = useMemo(() => {
@@ -233,8 +297,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
         <CircularProgress />
-      </Box>
-    );
+      </Box>);
   }
 
   if (error) {
@@ -258,9 +321,9 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
             variant="outlined"
             startIcon={syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
             onClick={handleSyncPages}
-            disabled={syncing}
+            disabled={syncing || isPolling}
           >
-            {syncing ? 'Syncing...' : 'Sync Pages'}
+            {syncing ? 'Syncing...' : isPolling ? 'Sync in progress...' : 'Sync Pages'}
           </Button>
         </Grid>
       </Grid>
@@ -375,44 +438,44 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                               backgroundColor: theme.palette.error.main,
                             },
                           }}
-                          >
-                            {submitting === page.id ? <CircularProgress size={24} /> : 'Submit'}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-            <TablePagination
-              rowsPerPageOptions={[10, 25, 50, 100]}
-              component="div"
-              count={allPages.length}
-              rowsPerPage={rowsPerPage}
-              page={page}
-              onPageChange={handleChangePage}
-              onRowsPerPageChange={handleChangeRowsPerPage}
-            />
-          </Paper>
-        ) : (
-          <Alert severity="info">No pages found for this website.</Alert>
-        )}
+                        >
+                          {submitting === page.id ? <CircularProgress size={24} /> : 'Submit'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+          <TablePagination
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            component="div"
+            count={allPages.length}
+            rowsPerPage={rowsPerPage}
+            page={page}
+            onPageChange={handleChangePage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+          />
+        </Paper>
+      ) : (
+        <Alert severity="info">No pages found for this website.</Alert>
+      )}
   
-        <Snackbar
-          open={snackbar.open}
-          autoHideDuration={6000}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
           onClose={() => setSnackbar({ ...snackbar, open: false })}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
         >
-          <Alert
-            onClose={() => setSnackbar({ ...snackbar, open: false })}
-            severity={snackbar.severity}
-            sx={{ width: '100%' }}
-          >
-            {snackbar.message}
-          </Alert>
-        </Snackbar>
-      </Box>
-    );
-  }
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+}
