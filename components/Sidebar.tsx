@@ -97,7 +97,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
 
       <List>
         <ListItem>
-          <ListItemText primary="Enabled Websites" />
+          <ListItemText primary="Auto-Indexed Websites" />
         </ListItem>
         {loading ? (
           <ListItem>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -18,11 +18,12 @@ import {
   useTheme,
   useMediaQuery,
   Button,
+  Grid,
 } from '@mui/material';
+import { SyncAlt as SyncIcon } from '@mui/icons-material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
 import IndexingStats from '@/components/IndexingStats';
-import { getGA4AnalyticsData } from '@/lib/googleAnalytics';
 
 type Order = 'asc' | 'desc';
 
@@ -30,65 +31,54 @@ interface HeadCell {
   id: keyof Page | 'impressions' | 'clicks' | 'actions';
   label: string;
   numeric: boolean;
+  sortable: boolean;
 }
 
 const headCells: HeadCell[] = [
-  { id: 'url', label: 'URL', numeric: false },
-  { id: 'indexing_status', label: 'Status', numeric: false },
-  { id: 'last_indexed_date', label: 'Last Indexed', numeric: false },
-  { id: 'impressions', label: 'Impressions', numeric: true },
-  { id: 'clicks', label: 'Clicks', numeric: true },
-  { id: 'actions', label: 'Actions', numeric: false },
+  { id: 'url', label: 'URL', numeric: false, sortable: true },
+  { id: 'indexing_status', label: 'Status', numeric: false, sortable: true },
+  { id: 'last_indexed_date', label: 'Last Crawled', numeric: false, sortable: true },
+  { id: 'impressions', label: 'Impressions', numeric: true, sortable: true },
+  { id: 'clicks', label: 'Clicks', numeric: true, sortable: true },
+  { id: 'actions', label: 'Actions', numeric: false, sortable: false },
 ];
 
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
-  const [pages, setPages] = useState<Page[]>([]);
+  const [allPages, setAllPages] = useState<Page[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order>('asc');
-  const [orderBy, setOrderBy] = useState<keyof Page>('url');
+  const [orderBy, setOrderBy] = useState<keyof Page | 'impressions' | 'clicks'>('url');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
-  const [hasMore, setHasMore] = useState(true);
   const [analyticsData, setAnalyticsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});
 
   const setGlobalError = useError();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  useEffect(() => {
-    fetchWebsiteDetails();
-  }, [websiteId, page, rowsPerPage, order, orderBy]);
-
-  const fetchWebsiteDetails = async () => {
+  const fetchWebsiteDetails = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?page=${page}&pageSize=${rowsPerPage}&orderBy=${orderBy}&order=${order}`);
+      const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?all=true`);
 
       if (!pagesResponse.ok) {
         throw new Error('Failed to fetch website details');
       }
 
       const pagesData = await pagesResponse.json();
-      setPages(pagesData.pages || []);
-      setHasMore(pagesData.pages.length === rowsPerPage);
+      setAllPages(pagesData.pages || []);
 
-      // Fetch Impressions and Clicks
-      const urls = pagesData.pages.map((p: Page) => encodeURIComponent(p.url)); // Encode URLs to handle special characters
+      const urls = pagesData.pages.map((p: Page) => p.url);
       const analyticsResponse = await fetch(`/api/websites/${websiteId}/analytics?urls=${urls.join(',')}`);
       if (!analyticsResponse.ok) {
         throw new Error('Failed to fetch analytics data');
       }
       const analyticsData = await analyticsResponse.json();
       setAnalyticsData(analyticsData.data);
-
-      console.log('Fetched pages data:', pagesData);
-      console.log('Fetched analytics data:', analyticsData);
-      console.log('Pages array length:', pagesData.pages.length);
-      console.log('First page:', pagesData.pages[0]);
 
     } catch (err) {
       console.error('Error fetching website details:', err);
@@ -97,13 +87,16 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     } finally {
       setLoading(false);
     }
-  };
+  }, [websiteId, setGlobalError]);
+
+  useEffect(() => {
+    fetchWebsiteDetails();
+  }, [fetchWebsiteDetails]);
 
   const handleRequestSort = (property: keyof Page | 'impressions' | 'clicks') => {
     const isAsc = orderBy === property && order === 'asc';
     setOrder(isAsc ? 'desc' : 'asc');
-    setOrderBy(property as keyof Page);
-    setPage(0);
+    setOrderBy(property);
   };
 
   const handleChangePage = (event: unknown, newPage: number) => {
@@ -133,7 +126,47 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     }
   };
 
-  if (loading && page === 0) {
+  const handleSyncPages = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`/api/websites/${websiteId}/sync-pages`, { method: 'POST' });
+      if (!response.ok) {
+        throw new Error('Failed to sync pages');
+      }
+      await fetchWebsiteDetails();
+    } catch (err) {
+      console.error('Error syncing pages:', err);
+      setGlobalError('Failed to sync pages. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sortedAndPaginatedPages = useMemo(() => {
+    const sortedPages = [...allPages].sort((a, b) => {
+      const aValue = orderBy === 'impressions' || orderBy === 'clicks' 
+        ? (analyticsData[a.url]?.[orderBy] || 0) 
+        : a[orderBy as keyof Page];
+      const bValue = orderBy === 'impressions' || orderBy === 'clicks'
+        ? (analyticsData[b.url]?.[orderBy] || 0)
+        : b[orderBy as keyof Page];
+
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return order === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+      } else if (aValue instanceof Date && bValue instanceof Date) {
+        return order === 'asc' ? aValue.getTime() - bValue.getTime() : bValue.getTime() - aValue.getTime();
+      } else if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return order === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+      return 0;
+    });
+
+    const startIndex = page * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    return sortedPages.slice(startIndex, endIndex);
+  }, [allPages, order, orderBy, analyticsData, page, rowsPerPage]);
+
+  if (loading && allPages.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
         <CircularProgress />
@@ -151,17 +184,31 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        Website Details
-      </Typography>
+      <Grid container spacing={3} alignItems="center" sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6}>
+          <Typography variant="h4" component="h1">
+            Website Details
+          </Typography>
+        </Grid>
+        <Grid item xs={12} sm={6} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            variant="outlined"
+            startIcon={<SyncIcon />}
+            onClick={handleSyncPages}
+            disabled={loading}
+          >
+            Sync Pages
+          </Button>
+        </Grid>
+      </Grid>
 
       <IndexingStats websiteId={websiteId} />
 
-      <Typography variant="h5" gutterBottom>
+      <Typography variant="h5" gutterBottom sx={{ mt: 4, mb: 2 }}>
         Pages
       </Typography>
 
-      {pages.length > 0 ? (
+      {allPages.length > 0 ? (
         <Paper>
           <TableContainer>
             <Table sx={{ minWidth: 300 }} aria-label="website pages table">
@@ -173,19 +220,23 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       align={headCell.numeric ? 'right' : 'left'}
                       sortDirection={orderBy === headCell.id ? order : false}
                     >
-                      <TableSortLabel
-                        active={orderBy === headCell.id}
-                        direction={orderBy === headCell.id ? order : 'asc'}
-                        onClick={() => handleRequestSort(headCell.id)}
-                      >
-                        {headCell.label}
-                      </TableSortLabel>
+                      {headCell.sortable ? (
+                        <TableSortLabel
+                          active={orderBy === headCell.id}
+                          direction={orderBy === headCell.id ? order : 'asc'}
+                          onClick={() => handleRequestSort(headCell.id)}
+                        >
+                          {headCell.label}
+                        </TableSortLabel>
+                      ) : (
+                        headCell.label
+                      )}
                     </TableCell>
                   ))}
                 </TableRow>
               </TableHead>
               <TableBody>
-                {pages.map((page) => (
+                {sortedAndPaginatedPages.map((page) => (
                   <TableRow key={page.id}>
                     <TableCell
                       component="th"
@@ -201,8 +252,8 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                     </TableCell>
                     <TableCell>{page.indexing_status}</TableCell>
                     <TableCell>{new Date(page.last_indexed_date).toLocaleString()}</TableCell>
-                    <TableCell align="right">{analyticsData[page.url] ? analyticsData[page.url].impressions : 0}</TableCell>
-                    <TableCell align="right">{analyticsData[page.url] ? analyticsData[page.url].clicks : 0}</TableCell>
+                    <TableCell align="right">{analyticsData[page.url]?.impressions || 0}</TableCell>
+                    <TableCell align="right">{analyticsData[page.url]?.clicks || 0}</TableCell>
                     <TableCell>
                       <Button
                         variant="contained"
@@ -219,16 +270,13 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
             </Table>
           </TableContainer>
           <TablePagination
-            rowsPerPageOptions={[10, 25, 50]}
+            rowsPerPageOptions={[10, 25, 50, 100]}
             component="div"
-            count={-1}
+            count={allPages.length}
             rowsPerPage={rowsPerPage}
             page={page}
             onPageChange={handleChangePage}
             onRowsPerPageChange={handleChangeRowsPerPage}
-            nextIconButtonProps={{
-              disabled: !hasMore,
-            }}
           />
         </Paper>
       ) : (

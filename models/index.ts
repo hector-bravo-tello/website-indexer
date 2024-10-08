@@ -176,23 +176,35 @@ export async function updateWebsiteRobotsScan(id: number): Promise<{ statusCode:
 
 export async function getPagesByWebsiteId(
   websiteId: number, 
-  page: number, 
-  pageSize: number, 
-  orderBy: string, 
-  order: 'asc' | 'desc'
+  all: boolean = false,
+  page: number = 0, 
+  pageSize: number = 25, 
+  orderBy: string = 'url', 
+  order: 'asc' | 'desc' = 'asc'
 ): Promise<{ pages: Page[], totalCount: number, statusCode: number }> {
   try {
-    const offset = page * pageSize;
-    const query = `
-      SELECT * FROM pages 
-      WHERE website_id = $1 
-      ORDER BY ${orderBy} ${order}
-      LIMIT $2 OFFSET $3
-    `;
-    const countQuery = 'SELECT COUNT(*) FROM pages WHERE website_id = $1';
+    let query: string;
+    let countQuery: string;
+    let queryParams: any[];
+
+    if (all) {
+      query = 'SELECT * FROM pages WHERE website_id = $1';
+      countQuery = 'SELECT COUNT(*) FROM pages WHERE website_id = $1';
+      queryParams = [websiteId];
+    } else {
+      const offset = page * pageSize;
+      query = `
+        SELECT * FROM pages 
+        WHERE website_id = $1 
+        ORDER BY ${orderBy} ${order}
+        LIMIT $2 OFFSET $3
+      `;
+      countQuery = 'SELECT COUNT(*) FROM pages WHERE website_id = $1';
+      queryParams = [websiteId, pageSize, offset];
+    }
     
     const [result, countResult] = await Promise.all([
-      pool.query(query, [websiteId, pageSize, offset]),
+      pool.query(query, queryParams),
       pool.query(countQuery, [websiteId])
     ]);
 
