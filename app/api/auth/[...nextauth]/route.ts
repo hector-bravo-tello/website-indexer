@@ -66,10 +66,28 @@ export const authOptions: AuthOptions = {
       return session;
     },
     async jwt({ token, account, user }) {
+      // Initial sign-in
       if (account && user) {
         token.userId = user.id;
+        token.accessToken = account.access_token;
+        token.refreshToken = account.refresh_token;
+        token.accessTokenExpires = account.expires_at * 1000; // Convert to milliseconds
       }
-      return token;
+
+      // Return the previous token if the access token has not expired yet
+      if (Date.now() < token.accessTokenExpires) {
+        return token;
+      }
+
+      // Access token has expired, refresh it using the refresh token
+      console.log('Access token has expired, attempting to refresh...');
+      return await refreshAccessToken(token);
+    },
+    async session({ session, token }) {
+      session.user.id = token.userId;
+      session.accessToken = token.accessToken;
+      session.error = token.error;
+      return session;
     },
   },
   pages: {

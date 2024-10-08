@@ -1,6 +1,5 @@
 // File: lib/tokenManager.ts
 
-import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { getUserTokens, updateUserTokens } from '@/models';
 import { UserTokens } from '@/types/index';
@@ -27,28 +26,39 @@ export async function getValidAccessToken(userId: number): Promise<string> {
       throw new TokenError('Token expiration time not set');
     }
 
-    if (new Date(expiresAt).getTime() - Date.now() < TOKEN_EXPIRY_BUFFER) {
+    const expiryTime = new Date(expiresAt).getTime();
+    const currentTime = Date.now();
+
+    if (expiryTime - currentTime < TOKEN_EXPIRY_BUFFER) {
       // Token is expired or close to expiring, refresh it
-      const newTokens = await refreshAccessToken(refreshToken);
-      await updateUserTokens(userId, newTokens.access_token, newTokens.refresh_token, newTokens.expires_at);
-      return newTokens.access_token;
+      try {
+        console.log('Refreshing access token...');
+        const newTokens = await refreshAccessToken(refreshToken);
+        await updateUserTokens(userId, newTokens.access_token, newTokens.refresh_token, newTokens.expires_at);
+        console.log('Access token refreshed successfully');
+        return newTokens.access_token;
+      } catch (refreshError) {
+        console.error('Error refreshing access token:', refreshError);
+        if (refreshError instanceof AuthorizationError) {
+          // Handle re-authentication need
+          throw new AuthorizationError('User needs to re-authenticate');
+        }
+        throw refreshError;
+      }
     }
 
     return accessToken;
   } catch (error) {
-    if (error instanceof TokenError) {
+    console.error('Error in getValidAccessToken:', error);
+    if (error instanceof TokenError || error instanceof AuthorizationError) {
       throw error;
-    } else if (error instanceof DatabaseError) {
-      console.error('Database error in getValidAccessToken:', error);
-      throw new TokenError('Failed to retrieve user tokens');
     } else {
-      console.error('Unexpected error in getValidAccessToken:', error);
-      throw new TokenError('An unexpected error occurred while getting access token');
+      throw new TokenError(`An unexpected error occurred while getting access token: ${error.message}`);
     }
   }
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
+export async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
   try {
     oauth2Client.setCredentials({ refresh_token: refreshToken });
 
@@ -76,7 +86,7 @@ async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
     } else if (error.response && error.response.status === 401) {
       throw new AuthorizationError('Refresh token has been revoked or expired. User needs to re-authenticate.');
     } else {
-      throw new TokenError('Failed to refresh access token');
+      throw new TokenError(`Failed to refresh access token: ${error.message}`);
     }
   }
 }

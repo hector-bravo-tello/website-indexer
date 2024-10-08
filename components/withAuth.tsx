@@ -1,10 +1,9 @@
-// components/withAuth.tsx
 'use client';
 
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-import { CircularProgress } from '@mui/material';
+import { CircularProgress, Box } from '@mui/material';
 
 export function withAuth<P extends object>(WrappedComponent: React.ComponentType<P>) {
   return function WithAuth(props: P) {
@@ -13,24 +12,23 @@ export function withAuth<P extends object>(WrappedComponent: React.ComponentType
 
     useEffect(() => {
       if (status === 'loading') return; // Do nothing while loading
-      if (!session) {
+      if (!session && status !== 'loading') {
         router.push('/auth/signin');
       }
     }, [session, status, router]);
 
     if (status === 'loading') {
       return (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
           <CircularProgress />
-        </div>
+        </Box>
       );
     }
 
-    // If authenticated, render the wrapped component
-    if (status === "authenticated") {
+    if (status === 'authenticated') {
       return <WrappedComponent {...props} />;
     }
-    
-    return null;
+
+    return null; // Render nothing while redirecting
   };
 }

@@ -67,11 +67,17 @@ export const authOptions: AuthOptions = {
       }
       return session;
     },
-    async jwt({ token, account, user }) {
-      if (account && user) {
-        token.userId = user.id;
+    async jwt({ token, account }) {
+      if (account) {
+        token.accessToken = account.access_token;
+        token.refreshToken = account.refresh_token;
+        token.expiresAt = account.expires_at;
       }
       return token;
+    },
+    async session({ session, token }) {
+      session.accessToken = token.accessToken;
+      return session;
     },
   },
   pages: {
@@ -2540,7 +2546,8 @@ import {
   getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
   updateWebsiteRobotsScan, 
-  getWebsiteById 
+  getPagesByWebsiteId,
+  removePages
 } from '@/models';
 import { fetchBulkIndexingStatus } from './googleSearchConsole';
 import { getValidAccessToken } from './tokenManager';
@@ -2632,11 +2639,17 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
     const sitemapContent = await fetchUrl(sitemapUrl);
     const pages = await parseSitemap(sitemapContent);
     
-    const urls = pages.map(page => page.url);
+    const urls = new Set(pages.map(page => page.url));
+
+    // Fetch existing pages from the database
+    const existingPages = await getPagesByWebsiteId(websiteId, true);
+
+    // Identify pages to remove (in database but not in sitemap)
+    const pagesToRemove = existingPages.pages.filter(page => !urls.has(page.url));
 
     // Fetch the actual indexing status and last indexed date from Google Search Console
     const accessToken = await getValidAccessToken(userId);
-    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, urls);
+    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, Array.from(urls));
 
     // Combine sitemap data with indexing data
     const formattedPages = pages.map(page => {
@@ -2648,9 +2661,16 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
       };
     });
 
+    // Update or add pages
     await addOrUpdatePagesFromSitemap(websiteId, formattedPages);
 
+    // Remove pages that are no longer in the sitemap
+    if (pagesToRemove.length > 0) {
+      await removePages(websiteId, pagesToRemove.map(page => page.id));
+    }
+
     return pages.length;
+
   } catch (error) {
     console.error(`Error processing sitemap ${sitemapUrl}:`, error);
     return 0;
@@ -3022,7 +3042,6 @@ export default theme;
 // Filename: lib/tokenManager.ts
 // File: lib/tokenManager.ts
 
-import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { getUserTokens, updateUserTokens } from '@/models';
 import { UserTokens } from '@/types/index';
@@ -3049,23 +3068,34 @@ export async function getValidAccessToken(userId: number): Promise<string> {
       throw new TokenError('Token expiration time not set');
     }
 
-    if (new Date(expiresAt).getTime() - Date.now() < TOKEN_EXPIRY_BUFFER) {
+    const expiryTime = new Date(expiresAt).getTime();
+    const currentTime = Date.now();
+
+    if (expiryTime - currentTime < TOKEN_EXPIRY_BUFFER) {
       // Token is expired or close to expiring, refresh it
-      const newTokens = await refreshAccessToken(refreshToken);
-      await updateUserTokens(userId, newTokens.access_token, newTokens.refresh_token, newTokens.expires_at);
-      return newTokens.access_token;
+      try {
+        console.log('Refreshing access token...');
+        const newTokens = await refreshAccessToken(refreshToken);
+        await updateUserTokens(userId, newTokens.access_token, newTokens.refresh_token, newTokens.expires_at);
+        console.log('Access token refreshed successfully');
+        return newTokens.access_token;
+      } catch (refreshError) {
+        console.error('Error refreshing access token:', refreshError);
+        if (refreshError instanceof AuthorizationError) {
+          // Handle re-authentication need
+          throw new AuthorizationError('User needs to re-authenticate');
+        }
+        throw refreshError;
+      }
     }
 
     return accessToken;
   } catch (error) {
-    if (error instanceof TokenError) {
+    console.error('Error in getValidAccessToken:', error);
+    if (error instanceof TokenError || error instanceof AuthorizationError) {
       throw error;
-    } else if (error instanceof DatabaseError) {
-      console.error('Database error in getValidAccessToken:', error);
-      throw new TokenError('Failed to retrieve user tokens');
     } else {
-      console.error('Unexpected error in getValidAccessToken:', error);
-      throw new TokenError('An unexpected error occurred while getting access token');
+      throw new TokenError(`An unexpected error occurred while getting access token: ${error.message}`);
     }
   }
 }
@@ -3098,7 +3128,7 @@ async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
     } else if (error.response && error.response.status === 401) {
       throw new AuthorizationError('Refresh token has been revoked or expired. User needs to re-authenticate.');
     } else {
-      throw new TokenError('Failed to refresh access token');
+      throw new TokenError(`Failed to refresh access token: ${error.message}`);
     }
   }
 }
@@ -3533,6 +3563,20 @@ export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { ur
   } catch (error) {
     console.error('Error in addOrUpdatePagesFromSitemap:', error);
     throw error;
+  }
+}
+
+export async function removePages(websiteId: number, pageIds: number[]): Promise<{ statusCode: number }> {
+  try {
+    const query = `
+      DELETE FROM pages
+      WHERE website_id = $1 AND id = ANY($2::int[])
+    `;
+    await pool.query(query, [websiteId, pageIds]);
+    return { statusCode: 200 };
+  } catch (error) {
+    console.error('Error removing pages:', error);
+    handleDatabaseError(error);
   }
 }
 
