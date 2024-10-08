@@ -921,6 +921,8 @@ import {
   useMediaQuery,
   Button,
   Grid,
+  Card,
+  CardContent,
 } from '@mui/material';
 import { SyncAlt as SyncIcon } from '@mui/icons-material';
 import { Website, Page } from '@/types';
@@ -947,8 +949,10 @@ const headCells: HeadCell[] = [
 
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
+  const [website, setWebsite] = useState<Website | null>(null);
   const [allPages, setAllPages] = useState<Page[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order>('asc');
   const [orderBy, setOrderBy] = useState<keyof Page | 'impressions' | 'clicks'>('url');
@@ -960,17 +964,26 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  const cleanDomain = (domain: string): string => {
+    return domain.replace(/^(sc-domain:)?(https?:\/\/)?(www\.)?/, '');
+  };
+
   const fetchWebsiteDetails = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?all=true`);
-
-      if (!pagesResponse.ok) {
+      const websiteResponse = await fetch(`/api/websites/${websiteId}`);
+      if (!websiteResponse.ok) {
         throw new Error('Failed to fetch website details');
       }
+      const websiteData = await websiteResponse.json();
+      setWebsite(websiteData);
 
+      const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?all=true`);
+      if (!pagesResponse.ok) {
+        throw new Error('Failed to fetch pages');
+      }
       const pagesData = await pagesResponse.json();
       setAllPages(pagesData.pages || []);
 
@@ -1030,8 +1043,14 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
   const handleSyncPages = async () => {
     try {
-      setLoading(true);
-      const response = await fetch(`/api/websites/${websiteId}/sync-pages`, { method: 'POST' });
+      setSyncing(true);
+      const response = await fetch(`/api/websites/${websiteId}/toggle-indexing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: true }),
+      });
       if (!response.ok) {
         throw new Error('Failed to sync pages');
       }
@@ -1040,8 +1059,12 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       console.error('Error syncing pages:', err);
       setGlobalError('Failed to sync pages. Please try again later.');
     } finally {
-      setLoading(false);
+      setSyncing(false);
     }
+  };
+
+  const getSubmitButtonColor = (status: string) => {
+    return status !== 'Submitted and indexed' ? theme.palette.error.light : theme.palette.primary.main;
   };
 
   const sortedAndPaginatedPages = useMemo(() => {
@@ -1089,17 +1112,17 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       <Grid container spacing={3} alignItems="center" sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6}>
           <Typography variant="h4" component="h1">
-            Website Details
+            {website ? cleanDomain(website.domain) : 'Website Details'}
           </Typography>
         </Grid>
         <Grid item xs={12} sm={6} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
           <Button
             variant="outlined"
-            startIcon={<SyncIcon />}
+            startIcon={syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
             onClick={handleSyncPages}
-            disabled={loading}
+            disabled={syncing}
           >
-            Sync Pages
+            {syncing ? 'Syncing...' : 'Sync Pages'}
           </Button>
         </Grid>
       </Grid>
@@ -1112,65 +1135,112 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
       {allPages.length > 0 ? (
         <Paper>
-          <TableContainer>
-            <Table sx={{ minWidth: 300 }} aria-label="website pages table">
-              <TableHead>
-                <TableRow>
-                  {headCells.map((headCell) => (
-                    <TableCell
-                      key={headCell.id}
-                      align={headCell.numeric ? 'right' : 'left'}
-                      sortDirection={orderBy === headCell.id ? order : false}
-                    >
-                      {headCell.sortable ? (
-                        <TableSortLabel
-                          active={orderBy === headCell.id}
-                          direction={orderBy === headCell.id ? order : 'asc'}
-                          onClick={() => handleRequestSort(headCell.id)}
-                        >
-                          {headCell.label}
-                        </TableSortLabel>
-                      ) : (
-                        headCell.label
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {sortedAndPaginatedPages.map((page) => (
-                  <TableRow key={page.id}>
-                    <TableCell
-                      component="th"
-                      scope="row"
-                      sx={{
-                        maxWidth: isMobile ? 150 : 300,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+          {isMobile ? (
+            // Mobile view
+            <Box>
+              {sortedAndPaginatedPages.map((page) => (
+                <Card key={page.id} sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ mb: 1, wordBreak: 'break-all' }}>
+                      {page.url}
+                    </Typography>
+                    <Typography variant="body2">Status: {page.indexing_status}</Typography>
+                    <Typography variant="body2">
+                      Last Crawled: {new Date(page.last_indexed_date).toLocaleString()}
+                    </Typography>
+                    <Typography variant="body2">
+                      Impressions: {analyticsData[page.url]?.impressions || 0}
+                    </Typography>
+                    <Typography variant="body2">
+                      Clicks: {analyticsData[page.url]?.clicks || 0}
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      onClick={() => handleSubmitForIndexing(page.id)}
+                      disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                      sx={{ 
+                        mt: 1, 
+                        backgroundColor: getSubmitButtonColor(page.indexing_status),
+                        '&:hover': {
+                          backgroundColor: theme.palette.error.main,
+                        },
                       }}
                     >
-                      {page.url}
-                    </TableCell>
-                    <TableCell>{page.indexing_status}</TableCell>
-                    <TableCell>{new Date(page.last_indexed_date).toLocaleString()}</TableCell>
-                    <TableCell align="right">{analyticsData[page.url]?.impressions || 0}</TableCell>
-                    <TableCell align="right">{analyticsData[page.url]?.clicks || 0}</TableCell>
-                    <TableCell>
-                      <Button
-                        variant="contained"
-                        size="small"
-                        onClick={() => handleSubmitForIndexing(page.id)}
-                        disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                      Submit
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </Box>
+          ) : (
+            // Desktop view
+            <TableContainer>
+              <Table sx={{ minWidth: 300 }} aria-label="website pages table">
+                <TableHead>
+                  <TableRow>
+                    {headCells.map((headCell) => (
+                      <TableCell
+                        key={headCell.id}
+                        align={headCell.numeric ? 'right' : 'left'}
+                        sortDirection={orderBy === headCell.id ? order : false}
                       >
-                        Submit
-                      </Button>
-                    </TableCell>
+                        {headCell.sortable ? (
+                          <TableSortLabel
+                            active={orderBy === headCell.id}
+                            direction={orderBy === headCell.id ? order : 'asc'}
+                            onClick={() => handleRequestSort(headCell.id)}
+                          >
+                            {headCell.label}
+                          </TableSortLabel>
+                        ) : (
+                          headCell.label
+                        )}
+                      </TableCell>
+                    ))}
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                </TableHead>
+                <TableBody>
+                  {sortedAndPaginatedPages.map((page) => (
+                    <TableRow key={page.id}>
+                      <TableCell
+                        component="th"
+                        scope="row"
+                        sx={{
+                          maxWidth: 300,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {page.url}
+                      </TableCell>
+                      <TableCell>{page.indexing_status}</TableCell>
+                      <TableCell>{new Date(page.last_indexed_date).toLocaleString()}</TableCell>
+                      <TableCell align="right">{analyticsData[page.url]?.impressions || 0}</TableCell>
+                      <TableCell align="right">{analyticsData[page.url]?.clicks || 0}</TableCell>
+                      <TableCell>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={() => handleSubmitForIndexing(page.id)}
+                          disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                          sx={{ 
+                            backgroundColor: getSubmitButtonColor(page.indexing_status),
+                            '&:hover': {
+                              backgroundColor: theme.palette.error.main,
+                            },
+                          }}
+                        >
+                          Submit
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
           <TablePagination
             rowsPerPageOptions={[10, 25, 50, 100]}
             component="div"

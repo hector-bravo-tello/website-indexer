@@ -12,7 +12,6 @@ import {
   TableRow,
   Paper,
   CircularProgress,
-  Alert,
   TablePagination,
   TableSortLabel,
   useTheme,
@@ -21,7 +20,9 @@ import {
   Grid,
   Card,
   CardContent,
+  Snackbar,
 } from '@mui/material';
+import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { SyncAlt as SyncIcon } from '@mui/icons-material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
@@ -45,6 +46,13 @@ const headCells: HeadCell[] = [
   { id: 'actions', label: 'Actions', numeric: false, sortable: false },
 ];
 
+const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
+  props,
+  ref,
+) {
+  return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
+});
+
 export default function WebsiteDetailsPage({ params }: { params: { websiteId: string } }) {
   const websiteId = parseInt(params.websiteId);
   const [website, setWebsite] = useState<Website | null>(null);
@@ -57,6 +65,12 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [analyticsData, setAnalyticsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});
+  const [submitting, setSubmitting] = useState<number | null>(null);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
 
   const setGlobalError = useError();
   const theme = useTheme();
@@ -123,6 +137,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
   const handleSubmitForIndexing = async (pageId: number) => {
     try {
+      setSubmitting(pageId);
       const response = await fetch(`/api/websites/${websiteId}/pages/${pageId}/submit-for-indexing`, {
         method: 'POST',
       });
@@ -131,11 +146,26 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to submit page for indexing');
       }
 
+      const result = await response.json();
+      setGlobalError(null);
+      setSnackbar({
+        open: true,
+        message: result.message || 'Page submitted for indexing successfully',
+        severity: 'success',
+      });
+
       // Refresh the page data
       fetchWebsiteDetails();
     } catch (err) {
       console.error('Error submitting page for indexing:', err);
       setGlobalError('Failed to submit page for indexing. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to submit page for indexing',
+        severity: 'error',
+      });
+    } finally {
+      setSubmitting(null);
     }
   };
 
@@ -153,9 +183,19 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to sync pages');
       }
       await fetchWebsiteDetails();
+      setSnackbar({
+        open: true,
+        message: 'Pages synced successfully',
+        severity: 'success',
+      });
     } catch (err) {
       console.error('Error syncing pages:', err);
       setGlobalError('Failed to sync pages. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to sync pages',
+        severity: 'error',
+      });
     } finally {
       setSyncing(false);
     }
@@ -256,7 +296,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       variant="contained"
                       size="small"
                       onClick={() => handleSubmitForIndexing(page.id)}
-                      disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                      disabled={
+                        submitting === page.id ||
+                        new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000
+                      }
                       sx={{ 
                         mt: 1, 
                         backgroundColor: getSubmitButtonColor(page.indexing_status),
@@ -265,7 +308,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                         },
                       }}
                     >
-                      Submit
+                      {submitting === page.id ? <CircularProgress size={24} /> : 'Submit'}
                     </Button>
                   </CardContent>
                 </Card>
@@ -322,36 +365,54 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                           variant="contained"
                           size="small"
                           onClick={() => handleSubmitForIndexing(page.id)}
-                          disabled={new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000}
+                          disabled={
+                            submitting === page.id ||
+                            new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000
+                          }
                           sx={{ 
                             backgroundColor: getSubmitButtonColor(page.indexing_status),
                             '&:hover': {
                               backgroundColor: theme.palette.error.main,
                             },
                           }}
-                        >
-                          Submit
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-          <TablePagination
-            rowsPerPageOptions={[10, 25, 50, 100]}
-            component="div"
-            count={allPages.length}
-            rowsPerPage={rowsPerPage}
-            page={page}
-            onPageChange={handleChangePage}
-            onRowsPerPageChange={handleChangeRowsPerPage}
-          />
-        </Paper>
-      ) : (
-        <Alert severity="info">No pages found for this website.</Alert>
-      )}
-    </Box>
-  );
-}
+                          >
+                            {submitting === page.id ? <CircularProgress size={24} /> : 'Submit'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={allPages.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={handleChangePage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+            />
+          </Paper>
+        ) : (
+          <Alert severity="info">No pages found for this website.</Alert>
+        )}
+  
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={6000}
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert
+            onClose={() => setSnackbar({ ...snackbar, open: false })}
+            severity={snackbar.severity}
+            sx={{ width: '100%' }}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+      </Box>
+    );
+  }

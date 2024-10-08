@@ -7,7 +7,8 @@ import {
   Typography, 
   Box, 
   CircularProgress, 
-  Snackbar, 
+  Snackbar,
+  Alert,
   Table, 
   TableBody, 
   TableCell, 
@@ -21,19 +22,33 @@ import {
   Switch
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
+import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { withAuth } from '@/components/withAuth';
 import { Website } from '@/types';
 import { useError } from '@/lib/useError';
 
+
 const Dashboard: React.FC = () => {
   const [websites, setWebsites] = useState<Website[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [orderBy, setOrderBy] = useState<keyof Website>('domain');
   const [order, setOrder] = useState<'asc' | 'desc'>('asc');
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
   const setError = useError();
+
+  const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
+    props,
+    ref,
+  ) {
+    return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
+  });
+  
 
   useEffect(() => {
     fetchWebsites();
@@ -74,10 +89,19 @@ const Dashboard: React.FC = () => {
           website.id === websiteId ? { ...website, indexing_enabled: !currentStatus } : website
         ) || null
       );
-      setMessage(data.message);
+      setSnackbar({
+        open: true,
+        message: data.message,
+        severity: 'success',
+      });
     } catch (error) {
       console.error('Error toggling indexing:', error);
       setError('Failed to update indexing status. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to update indexing status',
+        severity: 'error',
+      });
     }
   };
 
@@ -89,10 +113,19 @@ const Dashboard: React.FC = () => {
         throw new Error('Failed to refresh websites');
       }
       await fetchWebsites();
-      setMessage('Websites refreshed successfully');
+      setSnackbar({
+        open: true,
+        message: 'Websites refreshed successfully',
+        severity: 'success',
+      });
     } catch (error) {
       console.error('Error refreshing websites:', error);
       setError('Failed to refresh websites. Please try again later.');
+      setSnackbar({
+        open: true,
+        message: 'Failed to refresh websites',
+        severity: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -251,11 +284,19 @@ const Dashboard: React.FC = () => {
         onRowsPerPageChange={handleChangeRowsPerPage}
       />
       <Snackbar
-        open={!!message}
+        open={snackbar.open}
         autoHideDuration={6000}
-        onClose={() => setMessage(null)}
-        message={message}
-      />
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 };
