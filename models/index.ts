@@ -267,6 +267,20 @@ export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { ur
   }
 }
 
+export async function removePages(websiteId: number, pageIds: number[]): Promise<{ statusCode: number }> {
+  try {
+    const query = `
+      DELETE FROM pages
+      WHERE website_id = $1 AND id = ANY($2::int[])
+    `;
+    await pool.query(query, [websiteId, pageIds]);
+    return { statusCode: 200 };
+  } catch (error) {
+    console.error('Error removing pages:', error);
+    handleDatabaseError(error);
+  }
+}
+
 export async function getPagesForIndexing(websiteId: number, limit: number): Promise<{ pages: Page[], statusCode: number }> {
   try {
     const query = 'SELECT * FROM get_pages_for_indexing($1, $2)';

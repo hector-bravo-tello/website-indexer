@@ -7,7 +7,8 @@ import {
   getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
   updateWebsiteRobotsScan, 
-  getWebsiteById 
+  getPagesByWebsiteId,
+  removePages
 } from '@/models';
 import { fetchBulkIndexingStatus } from './googleSearchConsole';
 import { getValidAccessToken } from './tokenManager';
@@ -99,11 +100,17 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
     const sitemapContent = await fetchUrl(sitemapUrl);
     const pages = await parseSitemap(sitemapContent);
     
-    const urls = pages.map(page => page.url);
+    const urls = new Set(pages.map(page => page.url));
+
+    // Fetch existing pages from the database
+    const existingPages = await getPagesByWebsiteId(websiteId, true);
+
+    // Identify pages to remove (in database but not in sitemap)
+    const pagesToRemove = existingPages.pages.filter(page => !urls.has(page.url));
 
     // Fetch the actual indexing status and last indexed date from Google Search Console
     const accessToken = await getValidAccessToken(userId);
-    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, urls);
+    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, Array.from(urls));
 
     // Combine sitemap data with indexing data
     const formattedPages = pages.map(page => {
@@ -115,9 +122,16 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
       };
     });
 
+    // Update or add pages
     await addOrUpdatePagesFromSitemap(websiteId, formattedPages);
 
+    // Remove pages that are no longer in the sitemap
+    if (pagesToRemove.length > 0) {
+      await removePages(websiteId, pagesToRemove.map(page => page.id));
+    }
+
     return pages.length;
+
   } catch (error) {
     console.error(`Error processing sitemap ${sitemapUrl}:`, error);
     return 0;
