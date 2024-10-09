@@ -394,6 +394,42 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   });
 });
 
+// Filename: app/api/websites/daily-indexing/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getWebsitesForIndexing } from '@/models';
+import { processWebsiteForScheduledJob } from '@/lib/scheduledSitemapProcessor';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthorizationError } from '@/utils/errors';
+import CONFIG from '@/config';
+
+export const POST = withErrorHandling(async (request: NextRequest) => {
+  // Check for a secret token to ensure this route is only called by authorized systems
+  if (request.headers.get('x-api-key') !== CONFIG.apiKeys.dailyIndexing) {
+    throw new AuthorizationError('Invalid API key');
+  }
+
+  console.log('Starting daily indexing job');
+  
+  const { websites } = await getWebsitesForIndexing();
+
+  console.log(`Found ${websites.length} websites to process`);
+
+  for (const website of websites) {
+    try {
+      console.log(`Processing website: ${website.domain}`);
+      await processWebsiteForScheduledJob(website);
+      console.log(`Finished processing website: ${website.domain}`);
+
+    } catch (error) {
+      console.error(`Error processing website ${website.domain}:`, error);
+    }
+  }     
+
+  console.log('Daily indexing job completed');
+
+  return NextResponse.json({ message: 'Daily indexing job completed successfully' });
+});
+
 // Filename: app/api/websites/refresh/route.ts
 // File: app/api/websites/refresh/route.ts
 import { NextRequest, NextResponse } from 'next/server';
@@ -2086,6 +2122,9 @@ const CONFIG = {
     url: process.env.NEXTAUTH_URL,
     secret: process.env.NEXTAUTH_SECRET,
   },
+  apiKeys: {
+    dailyIndexing: process.env.DAILY_INDEXING_API_KEY,
+  },
 };
 
 export default CONFIG;
@@ -3365,18 +3404,18 @@ export const withErrorHandling = <T>(handler: () => Promise<T>): Promise<T> => {
 // File: models/index.ts
 
 import pool from '@/lib/db';
-import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData } from '@/types';
+import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData, EmailNotification } from '@/types';
 import { DatabaseError } from '@/utils/errors';
 
 // Helper function to handle database errors
 function handleDatabaseError(error: any): never {
   console.error('Database error:', error);
   if (error.code === '23505') { // unique_violation
-    throw new DatabaseError('Duplicate entry', 409);
+    throw new DatabaseError('Duplicate entry');
   } else if (error.code === '23503') { // foreign_key_violation
-    throw new DatabaseError('Related resource not found', 404);
+    throw new DatabaseError('Related resource not found');
   } else {
-    throw new DatabaseError('Database error occurred', 500);
+    throw new DatabaseError('Database error occurred');
   }
 }
 
@@ -3407,7 +3446,7 @@ export async function updateUser(id: number, user: Partial<User>): Promise<{ use
     const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), access_token = COALESCE($3, access_token), refresh_token = COALESCE($4, refresh_token), expires_at = COALESCE($5, expires_at), updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *';
     const result = await pool.query(query, [name, google_id, access_token, refresh_token, expires_at, id]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('User not found', 404);
+      throw new DatabaseError('User not found');
     }
     return { user: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -3520,7 +3559,7 @@ export async function updateWebsite(id: number, website: Partial<Website>): Prom
     `;
     const result = await pool.query(query, [domain, indexing_enabled, ga4_property_id, ga4_data_stream_id, id]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('Website not found', 404);
+      throw new DatabaseError('Website not found');
     }
     return { website: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -3672,7 +3711,7 @@ export async function updateIndexingJob(id: number, job: Partial<IndexingJob>): 
     const query = 'UPDATE indexing_jobs SET status = COALESCE($1, status), processed_pages = COALESCE($2, processed_pages), completed_at = CASE WHEN $1 = \'completed\' THEN CURRENT_TIMESTAMP ELSE completed_at END, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *';
     const result = await pool.query(query, [status, processed_pages, id]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('Indexing job not found', 404);
+      throw new DatabaseError('Indexing job not found');
     }
     return { job: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -3697,7 +3736,7 @@ export async function updateIndexingJobDetail(id: number, detail: Partial<Indexi
     const query = 'SELECT * FROM update_indexing_job_detail_status($1, $2, $3)';
     const result = await pool.query(query, [id, status, response]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('Indexing job detail not found', 404);
+      throw new DatabaseError('Indexing job detail not found');
     }
     return { detail: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -3740,42 +3779,6 @@ const nextConfig = {
 }
 
 module.exports = nextConfig
-
-// Filename: runDailyIndexing.ts
-import dotenv from 'dotenv';
-import { getWebsitesForIndexing } from './models';
-import { processWebsiteForScheduledJob } from './lib/scheduledSitemapProcessor';
-import pool from './lib/db';
-
-dotenv.config({ path: '.env' });
-console.log('Current working directory:', process.cwd());
-
-async function runDailyIndexing() {
-  console.log('Starting daily indexing job');
-  try {
-    const { websites } = await getWebsitesForIndexing();
-
-    console.log(`Found ${websites.length} websites to process`);
-
-    for (const website of websites) {
-      try {
-        console.log(`Processing website: ${website.domain}`);
-        await processWebsiteForScheduledJob(website);
-        console.log(`Finished processing website: ${website.domain}`);
-      } catch (error) {
-        console.error(`Error processing website ${website.domain}:`, error);
-      }
-    }
-
-    console.log('Daily indexing job completed');
-  } catch (error) {
-    console.error('Error in daily indexing job:', error);
-  } finally {
-    await pool.end();
-  }
-}
-
-runDailyIndexing().catch(console.error);
 
 // Filename: types/index.ts
 // File: types/index.ts
