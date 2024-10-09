@@ -1,6 +1,6 @@
 // File: models/index.ts
 
-import pool from '../lib/db';
+import pool from '@/lib/db';
 import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData } from '@/types';
 import { DatabaseError } from '@/utils/errors';
 
@@ -347,16 +347,6 @@ export async function createEmailNotification(notification: Partial<EmailNotific
     const query = 'SELECT * FROM create_email_notification($1, $2, $3, $4)';
     const result = await pool.query(query, [user_id, website_id, type, content]);
     return { notification: result.rows[0], statusCode: 201 };
-  } catch (error) {
-    handleDatabaseError(error);
-  }
-}
-
-export async function startIndexingJob(websiteId: number, batchSize: number): Promise<{ statusCode: number }> {
-  try {
-    const query = 'CALL start_indexing_job($1, $2)';
-    await pool.query(query, [websiteId, batchSize]);
-    return { statusCode: 200 };
   } catch (error) {
     handleDatabaseError(error);
   }

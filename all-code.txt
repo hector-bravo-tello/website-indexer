@@ -67,16 +67,28 @@ export const authOptions: AuthOptions = {
       }
       return session;
     },
-    async jwt({ token, account }) {
-      if (account) {
+    async jwt({ token, account, user }) {
+      // Initial sign-in
+      if (account && user) {
+        token.userId = user.id;
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
-        token.expiresAt = account.expires_at;
+        token.accessTokenExpires = account.expires_at * 1000; // Convert to milliseconds
       }
-      return token;
+
+      // Return the previous token if the access token has not expired yet
+      if (Date.now() < token.accessTokenExpires) {
+        return token;
+      }
+
+      // Access token has expired, refresh it using the refresh token
+      console.log('Access token has expired, attempting to refresh...');
+      return await refreshAccessToken(token);
     },
     async session({ session, token }) {
+      session.user.id = token.userId;
       session.accessToken = token.accessToken;
+      session.error = token.error;
       return session;
     },
   },
@@ -337,7 +349,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     message = 'Auto-indexing enabled.';
     if (shouldRunJob) {
       try {
-        await jobQueue.addJob(websiteId);
+        await jobQueue.addJob(websiteId, 'ui');
         message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
       } catch (error) {
         console.error(`Failed to start indexing job for website ${websiteId}:`, error);
@@ -502,7 +514,7 @@ export default function LoginPage() {
   );
 }
 
-// Filename: app/dashboard/page.tsx
+// Filename: app/dashboard/page..tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -1677,12 +1689,6 @@ const IndexingStats: React.FC<IndexingStatsProps> = ({ websiteId }) => {
       setLoading(false);
     }
   };
-
-  /*
-  if (loading) {
-    return <CircularProgress />;
-  }
-  */
  
   if (error) {
     return <Alert severity="error">{error}</Alert>;
@@ -1860,7 +1866,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
 
       <List>
         <Link href="/dashboard" passHref legacyBehavior>
-          <ListItem button component="a">
+          <ListItem button="true">
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
@@ -1880,7 +1886,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         ) : websites.length > 0 ? (
           websites.map((website) => (
             <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
-              <ListItem button component="a">
+              <ListItem button="true">
                 <ListItemIcon>
                   <WebIcon />
                 </ListItemIcon>
@@ -2018,13 +2024,12 @@ const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, o
 export default WebsiteList;
 
 // Filename: components/withAuth.tsx
-// components/withAuth.tsx
 'use client';
 
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-import { CircularProgress } from '@mui/material';
+import { CircularProgress, Box } from '@mui/material';
 
 export function withAuth<P extends object>(WrappedComponent: React.ComponentType<P>) {
   return function WithAuth(props: P) {
@@ -2033,25 +2038,24 @@ export function withAuth<P extends object>(WrappedComponent: React.ComponentType
 
     useEffect(() => {
       if (status === 'loading') return; // Do nothing while loading
-      if (!session) {
+      if (!session && status !== 'loading') {
         router.push('/auth/signin');
       }
     }, [session, status, router]);
 
     if (status === 'loading') {
       return (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
           <CircularProgress />
-        </div>
+        </Box>
       );
     }
 
-    // If authenticated, render the wrapped component
-    if (status === "authenticated") {
+    if (status === 'authenticated') {
       return <WrappedComponent {...props} />;
     }
-    
-    return null;
+
+    return null; // Render nothing while redirecting
   };
 }
 
@@ -2461,20 +2465,24 @@ export async function getPageImpressionsAndClicks(websiteId: number, urls: strin
 }
 
 // Filename: lib/jobQueue.ts
-// lib/jobQueue.ts
-
 import { processSingleWebsite } from '@/lib/sitemapProcessor';
+import { processWebsiteForScheduledJob } from '@/lib/scheduledSitemapProcessor';
 import { getWebsiteById } from '@/models';
 
+interface Job {
+  websiteId: number;
+  type: 'ui' | 'scheduled';
+}
+
 class JobQueue {
-  private queue: number[] = [];
+  private queue: Job[] = [];
   private isProcessing: boolean = false;
 
-  async addJob(websiteId: number): Promise<void> {
+  async addJob(websiteId: number, type: 'ui' | 'scheduled'): Promise<void> {
     if (typeof websiteId !== 'number') {
       throw new Error('Invalid websiteId: must be a number');
     }
-    this.queue.push(websiteId);
+    this.queue.push({ websiteId, type });
     if (!this.isProcessing) {
       this.processNextJob();
     }
@@ -2487,18 +2495,22 @@ class JobQueue {
     }
 
     this.isProcessing = true;
-    const websiteId = this.queue.shift();
+    const job = this.queue.shift();
 
-    if (websiteId !== undefined) {
+    if (job) {
       try {
-        const { website } = await getWebsiteById(websiteId);
+        const { website } = await getWebsiteById(job.websiteId);
         if (website) {
-          await processSingleWebsite(website);
+          if (job.type === 'ui') {
+            await processSingleWebsite(website);
+          } else if (job.type === 'scheduled') {
+            await processWebsiteForScheduledJob(website);
+          }
         } else {
-          console.error(`Website with id ${websiteId} not found`);
+          console.error(`Website with id ${job.websiteId} not found`);
         }
       } catch (error) {
-        console.error(`Error processing website ${websiteId}:`, error);
+        console.error(`Error processing website ${job.websiteId}:`, error);
       }
     }
 
@@ -2510,31 +2522,84 @@ const jobQueue = new JobQueue();
 
 export default jobQueue;
 
-// Filename: lib/scheduler.ts
-// lib/scheduler.ts
-import cron from 'node-cron';
-import jobQueue from './jobQueue';
-import { getWebsitesForIndexing } from '@/models';
+// Filename: lib/scheduledSitemapProcessor.ts
+import { Website, Page, IndexingStatus } from '@/types';
+import { 
+  getWebsitesForIndexing, 
+  addOrUpdatePagesFromSitemap, 
+  getPagesByWebsiteId,
+  removePages,
+  createIndexingJob,
+  updateIndexingJob,
+  createIndexingJobDetail,
+  updateIndexingJobDetail
+} from '@/models';
+import { fetchBulkIndexingStatus, submitUrlForIndexing } from './googleSearchConsole';
+import { getValidAccessToken } from '@/lib/tokenManager';
+import { fetchUrl, extractSitemapUrls, parseSitemap } from './sitemapProcessor';
 
-export function scheduleIndexingJobs() {
-  // Run every day at midnight or adjust the cron schedule as per your need
-  cron.schedule('0 0 * * *', async () => {
-    try {
-      const websites = await getWebsitesForIndexing();
-      
-      for (const website of websites) {
-        // Enqueue website processing as a background job
-        await jobQueue.addJob({
-          type: 'processWebsite',
-          data: { websiteId: website.id }
+const indexed: string = 'Submitted and indexed';
+
+export async function processWebsiteForScheduledJob(website: Website): Promise<void> {
+  try {
+    const job = await createIndexingJob({ website_id: website.id, status: 'in_progress', total_pages: 0 });
+    const accessToken = await getValidAccessToken(website.user_id);
+
+    const robotsTxtUrl = `https://${website.domain}/robots.txt`;
+    const robotsTxtContent = await fetchUrl(robotsTxtUrl);
+    const sitemapUrls = extractSitemapUrls(robotsTxtContent);
+
+    let allPages: Page[] = [];
+    for (const sitemapUrl of sitemapUrls) {
+      const sitemapContent = await fetchUrl(sitemapUrl);
+      const pages = await parseSitemap(sitemapContent);
+      allPages = allPages.concat(pages);
+    }
+
+    const { pages: existingPages } = await getPagesByWebsiteId(website.id, true);
+    const existingUrls = new Set(existingPages.map(page => page.url));
+    const currentUrls = new Set(allPages.map(page => page.url));
+
+    const newUrls = allPages.filter(page => !existingUrls.has(page.url));
+    const removedUrls = existingPages.filter(page => !currentUrls.has(page.url));
+    const unchangedUrls = allPages.filter(page => existingUrls.has(page.url));
+
+    const urlsToCheck = [...newUrls, ...unchangedUrls].map(page => page.url);
+    const indexingStatuses = await fetchBulkIndexingStatus(website.id, website.domain, accessToken, urlsToCheck);
+
+    const pagesToUpdate = indexingStatuses.map(status => ({
+      url: status.url,
+      indexingStatus: status.indexingStatus,
+      lastIndexedDate: status.lastIndexedDate
+    }));
+
+    await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
+
+    for (const page of pagesToUpdate) {
+      if (page.indexingStatus !== indexed) {
+        await submitUrlForIndexing(website.domain, page.url, accessToken);
+        await createIndexingJobDetail({
+          indexing_job_id: job.job.id,
+          page_id: existingPages.find(p => p.url === page.url)?.id || 0,
+          status: 'pending'
         });
       }
-    } catch (error) {
-      console.error('Error in scheduled indexing job:', error);
     }
-  });
-}
 
+    if (removedUrls.length > 0) {
+      await removePages(website.id, removedUrls.map(page => page.id));
+    }
+
+    await updateIndexingJob(job.job.id, { 
+      status: 'completed', 
+      processed_pages: pagesToUpdate.length 
+    });
+
+  } catch (error) {
+    console.error(`Error processing website ${website.domain}:`, error);
+    throw error;
+  }
+}
 
 // Filename: lib/sitemapProcessor.ts
 import axios from 'axios';
@@ -2678,7 +2743,7 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
 }
 
 // Function to parse the sitemap XML and extract URLs
-async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> {
+export async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> {
   try {
     const result = await parseXml(sitemapContent);
     if (result.sitemapindex) {
@@ -2700,13 +2765,13 @@ async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> 
 }
 
 // Helper function to fetch and parse a sitemap from a given URL
-async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string }[]> {
+export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string }[]> {
   const sitemapContent = await fetchUrl(sitemapUrl);
   return parseSitemap(sitemapContent);
 }
 
 // Function to fetch URL content (robots.txt, sitemap.xml, etc.)
-async function fetchUrl(url: string): Promise<string> {
+export async function fetchUrl(url: string): Promise<string> {
   try {
     const response = await axios.get(url);
     return response.data;
@@ -2717,7 +2782,7 @@ async function fetchUrl(url: string): Promise<string> {
 }
 
 // Function to extract sitemap URLs from robots.txt
-function extractSitemapUrls(robotsTxtContent: string): string[] {
+export function extractSitemapUrls(robotsTxtContent: string): string[] {
   const lines = robotsTxtContent.split('\n');
   return lines
     .filter(line => line.toLowerCase().startsWith('sitemap:'))
@@ -3100,7 +3165,7 @@ export async function getValidAccessToken(userId: number): Promise<string> {
   }
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
+export async function refreshAccessToken(refreshToken: string): Promise<UserTokens> {
   try {
     oauth2Client.setCredentials({ refresh_token: refreshToken });
 
@@ -3299,7 +3364,7 @@ export const withErrorHandling = <T>(handler: () => Promise<T>): Promise<T> => {
 // Filename: models/index.ts
 // File: models/index.ts
 
-import pool from '../lib/db';
+import pool from '@/lib/db';
 import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData } from '@/types';
 import { DatabaseError } from '@/utils/errors';
 
@@ -3651,15 +3716,6 @@ export async function createEmailNotification(notification: Partial<EmailNotific
   }
 }
 
-export async function startIndexingJob(websiteId: number, batchSize: number): Promise<{ statusCode: number }> {
-  try {
-    const query = 'CALL start_indexing_job($1, $2)';
-    await pool.query(query, [websiteId, batchSize]);
-    return { statusCode: 200 };
-  } catch (error) {
-    handleDatabaseError(error);
-  }
-}
 
 // Filename: next-env.d.ts
 /// <reference types="next" />
@@ -3684,6 +3740,54 @@ const nextConfig = {
 }
 
 module.exports = nextConfig
+
+// Filename: runDailyIndexing.js
+require('dotenv').config();
+const { Pool } = require('pg');
+const { getWebsitesForIndexing } = require('@/models');
+const { processWebsiteForScheduledJob } = require('@/lib/scheduledSitemapProcessor');
+const CONFIG = require('@/config');
+
+const pool = new Pool({
+  host: CONFIG.database.host,
+  port: CONFIG.database.port,
+  database: CONFIG.database.name,
+  user: CONFIG.database.user,
+  password: CONFIG.database.password,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+async function runDailyIndexing() {
+  console.log('Starting daily indexing job');
+  try {
+    // Get all websites that need indexing
+    const { websites } = await getWebsitesForIndexing();
+
+    console.log(`Found ${websites.length} websites to process`);
+
+    // Process each website
+    for (const website of websites) {
+      try {
+        console.log(`Processing website: ${website.domain}`);
+        await processWebsiteForScheduledJob(website);
+        console.log(`Finished processing website: ${website.domain}`);
+      } catch (error) {
+        console.error(`Error processing website ${website.domain}:`, error);
+        // Continue with the next website
+      }
+    }
+
+    console.log('Daily indexing job completed');
+  } catch (error) {
+    console.error('Error in daily indexing job:', error);
+  } finally {
+    // Close the database connection
+    await pool.end();
+  }
+}
+
+// Run the job
+runDailyIndexing().catch(console.error);
 
 // Filename: types/index.ts
 // File: types/index.ts

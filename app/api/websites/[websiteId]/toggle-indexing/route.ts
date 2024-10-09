@@ -49,7 +49,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     message = 'Auto-indexing enabled.';
     if (shouldRunJob) {
       try {
-        await jobQueue.addJob(websiteId);
+        await jobQueue.addJob(websiteId, 'ui');
         message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
       } catch (error) {
         console.error(`Failed to start indexing job for website ${websiteId}:`, error);

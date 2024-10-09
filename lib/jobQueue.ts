@@ -1,17 +1,21 @@
-// lib/jobQueue.ts
-
 import { processSingleWebsite } from '@/lib/sitemapProcessor';
+import { processWebsiteForScheduledJob } from '@/lib/scheduledSitemapProcessor';
 import { getWebsiteById } from '@/models';
 
+interface Job {
+  websiteId: number;
+  type: 'ui' | 'scheduled';
+}
+
 class JobQueue {
-  private queue: number[] = [];
+  private queue: Job[] = [];
   private isProcessing: boolean = false;
 
-  async addJob(websiteId: number): Promise<void> {
+  async addJob(websiteId: number, type: 'ui' | 'scheduled'): Promise<void> {
     if (typeof websiteId !== 'number') {
       throw new Error('Invalid websiteId: must be a number');
     }
-    this.queue.push(websiteId);
+    this.queue.push({ websiteId, type });
     if (!this.isProcessing) {
       this.processNextJob();
     }
@@ -24,18 +28,22 @@ class JobQueue {
     }
 
     this.isProcessing = true;
-    const websiteId = this.queue.shift();
+    const job = this.queue.shift();
 
-    if (websiteId !== undefined) {
+    if (job) {
       try {
-        const { website } = await getWebsiteById(websiteId);
+        const { website } = await getWebsiteById(job.websiteId);
         if (website) {
-          await processSingleWebsite(website);
+          if (job.type === 'ui') {
+            await processSingleWebsite(website);
+          } else if (job.type === 'scheduled') {
+            await processWebsiteForScheduledJob(website);
+          }
         } else {
-          console.error(`Website with id ${websiteId} not found`);
+          console.error(`Website with id ${job.websiteId} not found`);
         }
       } catch (error) {
-        console.error(`Error processing website ${websiteId}:`, error);
+        console.error(`Error processing website ${job.websiteId}:`, error);
       }
     }
 

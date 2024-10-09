@@ -139,7 +139,7 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
 }
 
 // Function to parse the sitemap XML and extract URLs
-async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> {
+export async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> {
   try {
     const result = await parseXml(sitemapContent);
     if (result.sitemapindex) {
@@ -161,13 +161,13 @@ async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> 
 }
 
 // Helper function to fetch and parse a sitemap from a given URL
-async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string }[]> {
+export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string }[]> {
   const sitemapContent = await fetchUrl(sitemapUrl);
   return parseSitemap(sitemapContent);
 }
 
 // Function to fetch URL content (robots.txt, sitemap.xml, etc.)
-async function fetchUrl(url: string): Promise<string> {
+export async function fetchUrl(url: string): Promise<string> {
   try {
     const response = await axios.get(url);
     return response.data;
@@ -178,7 +178,7 @@ async function fetchUrl(url: string): Promise<string> {
 }
 
 // Function to extract sitemap URLs from robots.txt
-function extractSitemapUrls(robotsTxtContent: string): string[] {
+export function extractSitemapUrls(robotsTxtContent: string): string[] {
   const lines = robotsTxtContent.split('\n');
   return lines
     .filter(line => line.toLowerCase().startsWith('sitemap:'))
