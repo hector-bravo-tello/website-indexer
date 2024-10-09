@@ -23,6 +23,9 @@ const CONFIG = {
     url: process.env.NEXTAUTH_URL,
     secret: process.env.NEXTAUTH_SECRET,
   },
+  apiKeys: {
+    dailyIndexing: process.env.DAILY_INDEXING_API_KEY,
+  },
 };
 
 export default CONFIG;

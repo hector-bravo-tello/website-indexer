@@ -1,18 +1,18 @@
 // File: models/index.ts
 
 import pool from '@/lib/db';
-import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData } from '@/types';
+import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData, EmailNotification } from '@/types';
 import { DatabaseError } from '@/utils/errors';
 
 // Helper function to handle database errors
 function handleDatabaseError(error: any): never {
   console.error('Database error:', error);
   if (error.code === '23505') { // unique_violation
-    throw new DatabaseError('Duplicate entry', 409);
+    throw new DatabaseError('Duplicate entry');
   } else if (error.code === '23503') { // foreign_key_violation
-    throw new DatabaseError('Related resource not found', 404);
+    throw new DatabaseError('Related resource not found');
   } else {
-    throw new DatabaseError('Database error occurred', 500);
+    throw new DatabaseError('Database error occurred');
   }
 }
 
@@ -43,7 +43,7 @@ export async function updateUser(id: number, user: Partial<User>): Promise<{ use
     const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), access_token = COALESCE($3, access_token), refresh_token = COALESCE($4, refresh_token), expires_at = COALESCE($5, expires_at), updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *';
     const result = await pool.query(query, [name, google_id, access_token, refresh_token, expires_at, id]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('User not found', 404);
+      throw new DatabaseError('User not found');
     }
     return { user: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -156,7 +156,7 @@ export async function updateWebsite(id: number, website: Partial<Website>): Prom
     `;
     const result = await pool.query(query, [domain, indexing_enabled, ga4_property_id, ga4_data_stream_id, id]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('Website not found', 404);
+      throw new DatabaseError('Website not found');
     }
     return { website: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -308,7 +308,7 @@ export async function updateIndexingJob(id: number, job: Partial<IndexingJob>): 
     const query = 'UPDATE indexing_jobs SET status = COALESCE($1, status), processed_pages = COALESCE($2, processed_pages), completed_at = CASE WHEN $1 = \'completed\' THEN CURRENT_TIMESTAMP ELSE completed_at END, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *';
     const result = await pool.query(query, [status, processed_pages, id]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('Indexing job not found', 404);
+      throw new DatabaseError('Indexing job not found');
     }
     return { job: result.rows[0], statusCode: 200 };
   } catch (error) {
@@ -333,7 +333,7 @@ export async function updateIndexingJobDetail(id: number, detail: Partial<Indexi
     const query = 'SELECT * FROM update_indexing_job_detail_status($1, $2, $3)';
     const result = await pool.query(query, [id, status, response]);
     if (result.rowCount === 0) {
-      throw new DatabaseError('Indexing job detail not found', 404);
+      throw new DatabaseError('Indexing job detail not found');
     }
     return { detail: result.rows[0], statusCode: 200 };
   } catch (error) {

@@ -3741,31 +3741,22 @@ const nextConfig = {
 
 module.exports = nextConfig
 
-// Filename: runDailyIndexing.js
-require('dotenv').config();
-const { Pool } = require('pg');
-const { getWebsitesForIndexing } = require('@/models');
-const { processWebsiteForScheduledJob } = require('@/lib/scheduledSitemapProcessor');
-const CONFIG = require('@/config');
+// Filename: runDailyIndexing.ts
+import dotenv from 'dotenv';
+import { getWebsitesForIndexing } from './models';
+import { processWebsiteForScheduledJob } from './lib/scheduledSitemapProcessor';
+import pool from './lib/db';
 
-const pool = new Pool({
-  host: CONFIG.database.host,
-  port: CONFIG.database.port,
-  database: CONFIG.database.name,
-  user: CONFIG.database.user,
-  password: CONFIG.database.password,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+dotenv.config({ path: '.env' });
+console.log('Current working directory:', process.cwd());
 
 async function runDailyIndexing() {
   console.log('Starting daily indexing job');
   try {
-    // Get all websites that need indexing
     const { websites } = await getWebsitesForIndexing();
 
     console.log(`Found ${websites.length} websites to process`);
 
-    // Process each website
     for (const website of websites) {
       try {
         console.log(`Processing website: ${website.domain}`);
@@ -3773,7 +3764,6 @@ async function runDailyIndexing() {
         console.log(`Finished processing website: ${website.domain}`);
       } catch (error) {
         console.error(`Error processing website ${website.domain}:`, error);
-        // Continue with the next website
       }
     }
 
@@ -3781,12 +3771,10 @@ async function runDailyIndexing() {
   } catch (error) {
     console.error('Error in daily indexing job:', error);
   } finally {
-    // Close the database connection
     await pool.end();
   }
 }
 
-// Run the job
 runDailyIndexing().catch(console.error);
 
 // Filename: types/index.ts
