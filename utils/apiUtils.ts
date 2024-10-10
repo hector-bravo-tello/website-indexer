@@ -1,5 +1,5 @@
 // File: utils/apiUtils.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { AppError, DatabaseError, ValidationError, AuthenticationError, AuthorizationError, NotFoundError } from './errors';
 
 export async function handleApiError(error: unknown): Promise<NextResponse> {

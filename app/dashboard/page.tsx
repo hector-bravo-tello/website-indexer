@@ -58,6 +58,7 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       const response = await fetch('/api/websites');
+      console.log(response);
       if (!response.ok) {
         throw new Error('Failed to fetch websites');
       }
@@ -160,8 +161,8 @@ const Dashboard: React.FC = () => {
   };
 
   const sortedWebsites = websites?.slice().sort((a, b) => {
-    let valueA = a[orderBy];
-    let valueB = b[orderBy];
+    let valueA: any = a[orderBy];
+    let valueB: any = b[orderBy];
     
     if (orderBy === 'domain') {
       valueA = extractDomain(valueA as string);

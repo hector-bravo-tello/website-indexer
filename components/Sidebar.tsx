@@ -86,7 +86,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
 
       <List>
         <Link href="/dashboard" passHref legacyBehavior>
-          <ListItem button="true">
+          <ListItem sx={{ cursor: 'pointer' }} button="true">
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
@@ -106,7 +106,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         ) : websites.length > 0 ? (
           websites.map((website) => (
             <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
-              <ListItem button="true">
+              <ListItem sx={{ cursor: 'pointer' }} button="true">
                 <ListItemIcon>
                   <WebIcon />
                 </ListItemIcon>

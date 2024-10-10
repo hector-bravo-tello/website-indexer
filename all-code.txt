@@ -1096,7 +1096,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order>('asc');
-  const [orderBy, setOrderBy] = useState<keyof Page | 'impressions' | 'clicks'>('url');
+  const [orderBy, setOrderBy] = useState<keyof Page | 'impressions' | 'clicks'>('indexing_status');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [analyticsData, setAnalyticsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});

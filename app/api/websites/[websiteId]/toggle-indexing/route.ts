@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { getWebsiteById, updateWebsite, startIndexingJob } from '@/models';
+import { getWebsiteById, updateWebsite } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 import jobQueue from '@/lib/jobQueue';
