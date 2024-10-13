@@ -30,7 +30,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  const { pages, totalCount } = await getPagesByWebsiteId(websiteId, all, page, pageSize, orderBy, order);
+  const { pages, totalCount } = await getPagesByWebsiteId(websiteId, all, page, pageSize, orderBy, order as 'asc' | 'desc');
 
   return NextResponse.json({ pages, totalCount });
 });

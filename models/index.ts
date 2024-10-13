@@ -20,7 +20,11 @@ export async function getUserByEmail(email: string): Promise<{ user: User | null
   try {
     const query = 'SELECT * FROM users WHERE email = $1';
     const result = await pool.query(query, [email]);
-    return { user: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+    let user = result.rows[0] || null;
+    if (user) {
+      user.id = user.id.toString(); // Convert ID to string
+    }
+    return { user, statusCode: user ? 200 : 404 };
   } catch (error) {
     handleDatabaseError(error);
   }
@@ -28,9 +32,9 @@ export async function getUserByEmail(email: string): Promise<{ user: User | null
 
 export async function createUser(user: Partial<User>): Promise<{ user: User, statusCode: number }> {
   try {
-    const { name, email, google_id, access_token, refresh_token, expires_at } = user;
-    const query = 'INSERT INTO users (name, email, google_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *';
-    const result = await pool.query(query, [name, email, google_id, access_token, refresh_token, expires_at]);
+    const { name, email, google_id } = user;
+    const query = 'INSERT INTO users (name, email, google_id) VALUES ($1, $2, $3) RETURNING *';
+    const result = await pool.query(query, [name, email, google_id]);
     return { user: result.rows[0], statusCode: 201 };
   } catch (error) {
     handleDatabaseError(error);
@@ -39,50 +43,15 @@ export async function createUser(user: Partial<User>): Promise<{ user: User, sta
 
 export async function updateUser(id: number, user: Partial<User>): Promise<{ user: User, statusCode: number }> {
   try {
-    const { name, google_id, access_token, refresh_token, expires_at } = user;
-    const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), access_token = COALESCE($3, access_token), refresh_token = COALESCE($4, refresh_token), expires_at = COALESCE($5, expires_at), updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *';
-    const result = await pool.query(query, [name, google_id, access_token, refresh_token, expires_at, id]);
+    const { name, google_id } = user;
+    const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *';
+    const result = await pool.query(query, [name, google_id, id]);
     if (result.rowCount === 0) {
       throw new DatabaseError('User not found');
     }
     return { user: result.rows[0], statusCode: 200 };
   } catch (error) {
     handleDatabaseError(error);
-  }
-}
-
-export async function updateUserTokens(userId: number, accessToken: string | null, refreshToken: string | null, expiresAt: string | null): Promise<void> {
-  try {
-    const query = `
-      UPDATE users
-      SET access_token = COALESCE($1, access_token),
-          refresh_token = COALESCE($2, refresh_token),
-          expires_at = COALESCE($3, expires_at),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
-    `;
-    await pool.query(query, [accessToken, refreshToken, expiresAt, userId]);
-  } catch (error) {
-    console.error('Error updating user tokens:', error);
-    throw error;
-  }
-}
-
-export async function getUserTokens(userId: number): Promise<{ accessToken: string, refreshToken: string, expiresAt: string } | null> {
-  try {
-    const query = 'SELECT access_token, refresh_token, expires_at FROM users WHERE id = $1';
-    const result = await pool.query(query, [userId]);
-    if (result.rows.length > 0) {
-      return {
-        accessToken: result.rows[0].access_token,
-        refreshToken: result.rows[0].refresh_token,
-        expiresAt: result.rows[0].expires_at
-      };
-    }
-    return null;
-  } catch (error) {
-    console.error('Error getting user tokens:', error);
-    throw error;
   }
 }
 
@@ -120,7 +89,7 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
   try {
     const query = `
       SELECT * FROM websites 
-      WHERE indexing_enabled = true 
+      WHERE enabled = true 
       AND (last_robots_scan IS NULL OR last_robots_scan < NOW() - INTERVAL '1 day')
     `;
     const result = await pool.query(query);
@@ -132,9 +101,9 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
 
 export async function createWebsite(website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
   try {
-    const { user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id } = website;
-    const query = 'INSERT INTO websites (user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id) VALUES ($1, $2, $3, $4, $5) RETURNING *';
-    const result = await pool.query(query, [user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id]);
+    const { user_id, domain, enabled, auto_indexing_enabled } = website;
+    const query = 'INSERT INTO websites (user_id, domain, enabled, auto_indexing_enabled) VALUES ($1, $2, $3, $4) RETURNING *';
+    const result = await pool.query(query, [user_id, domain, enabled, auto_indexing_enabled]);
     return { website: result.rows[0], statusCode: 201 };
   } catch (error) {
     handleDatabaseError(error);
@@ -143,18 +112,17 @@ export async function createWebsite(website: Partial<Website>): Promise<{ websit
 
 export async function updateWebsite(id: number, website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
   try {
-    const { domain, indexing_enabled, ga4_property_id, ga4_data_stream_id } = website;
+    const { domain, enabled, auto_indexing_enabled } = website;
     const query = `
       UPDATE websites 
       SET domain = COALESCE($1, domain), 
-          indexing_enabled = COALESCE($2, indexing_enabled),
-          ga4_property_id = COALESCE($3, ga4_property_id),
-          ga4_data_stream_id = COALESCE($4, ga4_data_stream_id),
+          enabled = COALESCE($2, enabled),      
+          auto_indexing_enabled = COALESCE($3, auto_indexing_enabled),
           updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $5 
+      WHERE id = $4 
       RETURNING *
     `;
-    const result = await pool.query(query, [domain, indexing_enabled, ga4_property_id, ga4_data_stream_id, id]);
+    const result = await pool.query(query, [domain, enabled, auto_indexing_enabled, id]);
     if (result.rowCount === 0) {
       throw new DatabaseError('Website not found');
     }

@@ -1,5 +1,7 @@
 
 // Filename: app/api/auth/[...nextauth]/route.ts
+// app/api/auth/[...nextauth]/route.ts
+
 import NextAuth, { AuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import { getUserByEmail, createUser, updateUser } from '@/models';
@@ -13,9 +15,7 @@ export const authOptions: AuthOptions = {
       clientSecret: CONFIG.google.clientSecret as string,
       authorization: {
         params: {
-          scope: 'openid email profile https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/indexing',
-          access_type: 'offline',
-          prompt: 'consent',
+          scope: 'openid email profile',
         }
       }
     }),
@@ -24,33 +24,23 @@ export const authOptions: AuthOptions = {
     async signIn({ user, account }) {
       if (account?.provider === "google" && user.email) {
         try {
-          const expiresAt = account.expires_at 
-            ? new Date(account.expires_at * 1000).toISOString()
-            : new Date(Date.now() + 3600 * 1000).toISOString(); // Default to 1 hour from now if expires_at is not provided
-
           const { user: dbUser } = await getUserByEmail(user.email);
           if (dbUser) {
             await updateUser(dbUser.id, {
               name: user.name,
               google_id: user.id,
-              access_token: account.access_token,
-              refresh_token: account.refresh_token,
-              expires_at: expiresAt
             });
-            user.id = dbUser.id;
+            user.id = dbUser.id.toString(); // Convert to string
           } else {
             const newUser = await createUser({
               name: user.name,
               email: user.email,
               google_id: user.id,
-              access_token: account.access_token,
-              refresh_token: account.refresh_token,
-              expires_at: expiresAt
             });
-            user.id = newUser.user.id;
+            user.id = newUser.user.id.toString(); // Convert to string
 
             // Fetch and store websites for new users
-            await fetchAndStoreWebsites(user.id, account.access_token);
+            await fetchAndStoreWebsites(parseInt(user.id)); // Convert back to number for our internal function
           }
           return true;
 
@@ -71,25 +61,8 @@ export const authOptions: AuthOptions = {
       // Initial sign-in
       if (account && user) {
         token.userId = user.id;
-        token.accessToken = account.access_token;
-        token.refreshToken = account.refresh_token;
-        token.accessTokenExpires = account.expires_at * 1000; // Convert to milliseconds
       }
-
-      // Return the previous token if the access token has not expired yet
-      if (Date.now() < token.accessTokenExpires) {
-        return token;
-      }
-
-      // Access token has expired, refresh it using the refresh token
-      console.log('Access token has expired, attempting to refresh...');
-      return await refreshAccessToken(token);
-    },
-    async session({ session, token }) {
-      session.user.id = token.userId;
-      session.accessToken = token.accessToken;
-      session.error = token.error;
-      return session;
+      return token;
     },
   },
   pages: {
@@ -102,49 +75,6 @@ export const authOptions: AuthOptions = {
 
 const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };
-
-// Filename: app/api/websites/[websiteId]/analytics/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { getWebsiteById } from '@/models';
-import { getPageImpressionsAndClicks } from '@/lib/googleSearchConsole';
-import { getValidAccessToken } from '@/lib/tokenManager';
-import { withErrorHandling } from '@/utils/apiUtils';
-import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
-
-export const GET = withErrorHandling(async (request: NextRequest) => {
-  const session = await getServerSession(authOptions);
-
-  if (!session || !session.user) {
-    throw new AuthenticationError('Unauthorized');
-  }
-
-  const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
-  const urls = request.nextUrl.searchParams.get('urls')?.split(',') || [];
-
-  if (isNaN(websiteId)) {
-    throw new ValidationError('Invalid website ID');
-  }
-
-  const { website } = await getWebsiteById(websiteId);
-
-  if (!website || website.user_id !== parseInt(session.user.id)) {
-    throw new NotFoundError('Website not found');
-  }
-
-  try {
-    const accessToken = await getValidAccessToken(website.user_id);
-    const analyticsData = await getPageImpressionsAndClicks(websiteId, urls, accessToken);
-    return NextResponse.json({ 
-      data: analyticsData, 
-      message: Object.keys(analyticsData).length === 0 ? 'No data returned from Google Search Console' : 'Data retrieved successfully' 
-    });
-  } catch (error) {
-    console.error('Error in analytics API route:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-});
 
 // Filename: app/api/websites/[websiteId]/indexing-stats/route.ts
 // Filename: /app/api/websites/[websiteId]/indexing-stats/route.ts
@@ -173,6 +103,42 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return NextResponse.json({ indexingStats });
 });
 
+
+// Filename: app/api/websites/[websiteId]/metrics/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getWebsiteById } from '@/models';
+import { getPageImpressionsAndClicks } from '@/lib/googleSearchConsole';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
+  const urls = request.nextUrl.searchParams.get('urls')?.split(',') || [];
+
+  if (isNaN(websiteId)) {
+    throw new ValidationError('Invalid website ID');
+  }
+
+  const { website } = await getWebsiteById(websiteId);
+
+  if (!website || website.user_id !== parseInt(session.user.id)) {
+    throw new NotFoundError('Website not found');
+  }
+
+  const analyticsData = await getPageImpressionsAndClicks(websiteId, urls);
+  return NextResponse.json({ 
+    data: analyticsData, 
+    message: Object.keys(analyticsData).length === 0 ? 'No data returned from Google Search Console' : 'Data retrieved successfully' 
+  });
+});
 
 // Filename: app/api/websites/[websiteId]/pages/[pageId]/submit-for-indexing/route.ts
 import { NextRequest, NextResponse } from 'next/server';
@@ -210,21 +176,19 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   // Check if 24 hours have passed since the last submission
-  const lastSubmissionDate = new Date(page.last_indexed_date);
+  const lastSubmissionDate = new Date(page.last_indexed_date as Date);
   const currentDate = new Date();
   const hoursSinceLastSubmission = (currentDate.getTime() - lastSubmissionDate.getTime()) / (1000 * 60 * 60);
 
   if (hoursSinceLastSubmission < 24) {
     throw new ValidationError('You can only submit a page for indexing once every 24 hours');
   }
-
-  const accessToken = await getValidAccessToken(parseInt(session.user.id));
-  
+ 
   // Submit the URL for indexing
-  await submitUrlForIndexing(website.domain, page.url, accessToken);
+  await submitUrlForIndexing(website.domain, page.url);
 
   // Update the page's last indexed date
-  await updatePageData(websiteId, page.url, 'pending', new Date());
+  await updatePageData(websiteId, page.url, 'Submitted', new Date());
 
   return NextResponse.json({ message: 'Page submitted for indexing successfully' });
 });
@@ -262,7 +226,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  const { pages, totalCount } = await getPagesByWebsiteId(websiteId, all, page, pageSize, orderBy, order);
+  const { pages, totalCount } = await getPagesByWebsiteId(websiteId, all, page, pageSize, orderBy, order as 'asc' | 'desc');
 
   return NextResponse.json({ pages, totalCount });
 });
@@ -297,13 +261,13 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return NextResponse.json(website);
 });
 
-// Filename: app/api/websites/[websiteId]/toggle-indexing/route.ts
+// Filename: app/api/websites/[websiteId]/toggle/route.ts
 // File: app/api/websites/[websiteId]/toggle-indexing/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { getWebsiteById, updateWebsite, startIndexingJob } from '@/models';
+import { getWebsiteById, updateWebsite } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 import jobQueue from '@/lib/jobQueue';
@@ -331,22 +295,24 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const body = await request.json();
-  const { enabled } = body;
+  const { enabled, auto_indexing_enabled } = body;
 
-  if (typeof enabled !== 'boolean') {
-    throw new ValidationError('Invalid input: enabled must be a boolean');
+  if (typeof enabled !== 'boolean' && typeof auto_indexing_enabled !== 'boolean') {
+    throw new ValidationError('Invalid request body. Expected "enabled" or "auto_indexing_enabled" boolean field.');
   }
 
-  const shouldRunJob = enabled && (
+  const shouldRunJob = enabled && auto_indexing_enabled (
     !website.last_robots_scan || 
     new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000
   );
 
-  const { website: updatedWebsite } = await updateWebsite(websiteId, { indexing_enabled: enabled });
+  const { website: updatedWebsite } = await updateWebsite(websiteId, { enabled: enabled, auto_indexing_enabled: auto_indexing_enabled });
 
   let message = '';
   if (enabled) {
-    message = 'Auto-indexing enabled.';
+    if (auto_indexing_enabled) message = 'Website enabled. Auto-indexing enabled.'
+    else message = 'Website enabled. Auto-indexing disabled.';
+
     if (shouldRunJob) {
       try {
         await jobQueue.addJob(websiteId, 'ui');
@@ -356,7 +322,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       }
     }
   } else {  
-    message = 'Auto-indexing disabled.';
+    message = 'Website disabled.';
   }
 
   return NextResponse.json({ 
@@ -391,6 +357,46 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return NextResponse.json({ 
     isCompleted,
     lastScanTime: website.last_robots_scan?.toISOString()
+  });
+});
+
+// Filename: app/api/websites/[websiteId]/verify-ownership/route.ts
+// File: app/api/websites/[websiteId]/verify-ownership/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getWebsiteById } from '@/models';
+import { verifyWebsiteOwnership } from '@/lib/googleSearchConsole';
+import { withErrorHandling } from '@/utils/apiUtils';
+import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  const session = await getServerSession(authOptions);
+
+  if (!session || !session.user) {
+    throw new AuthenticationError('Unauthorized');
+  }
+
+  const websiteId = parseInt(request.url.split('/').slice(-2)[0]);
+
+  if (isNaN(websiteId)) {
+    throw new ValidationError('Invalid website ID');
+  }
+
+  const { website } = await getWebsiteById(websiteId);
+  if (!website) {
+    throw new NotFoundError('Website not found');
+  }
+
+  if (website.user_id !== parseInt(session.user.id)) {
+    throw new AuthenticationError('You do not have permission to verify this website');
+  }
+
+  const isVerified = await verifyWebsiteOwnership(website.domain);
+
+  return NextResponse.json({ 
+    verified: isVerified,
+    message: isVerified ? 'Ownership verified successfully.' : 'No Ownership permissions.'
   });
 });
 
@@ -436,7 +442,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { fetchAndStoreWebsites } from '@/lib/googleSearchConsole';
-import { getValidAccessToken } from '@/lib/tokenManager';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError } from '@/utils/errors';
 
@@ -448,9 +453,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const userId = parseInt(session.user.id);
-  const accessToken = await getValidAccessToken(userId);
-
-  await fetchAndStoreWebsites(userId, accessToken);
+  await fetchAndStoreWebsites(userId);
 
   return NextResponse.json({ message: 'Websites refreshed successfully' });
 });
@@ -550,7 +553,7 @@ export default function LoginPage() {
   );
 }
 
-// Filename: app/dashboard/page..tsx
+// Filename: app/dashboard/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -611,6 +614,7 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       const response = await fetch('/api/websites');
+      console.log(response);
       if (!response.ok) {
         throw new Error('Failed to fetch websites');
       }
@@ -713,8 +717,8 @@ const Dashboard: React.FC = () => {
   };
 
   const sortedWebsites = websites?.slice().sort((a, b) => {
-    let valueA = a[orderBy];
-    let valueB = b[orderBy];
+    let valueA: any = a[orderBy];
+    let valueB: any = b[orderBy];
     
     if (orderBy === 'domain') {
       valueA = extractDomain(valueA as string);
@@ -1902,7 +1906,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
 
       <List>
         <Link href="/dashboard" passHref legacyBehavior>
-          <ListItem button="true">
+          <ListItem sx={{ cursor: 'pointer' }} button="true">
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
@@ -1922,7 +1926,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         ) : websites.length > 0 ? (
           websites.map((website) => (
             <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
-              <ListItem button="true">
+              <ListItem sx={{ cursor: 'pointer' }} button="true">
                 <ListItemIcon>
                   <WebIcon />
                 </ListItemIcon>
@@ -2156,305 +2160,137 @@ const pool = new Pool({
 
 export default pool;
 
-// Filename: lib/googleAnalytics.ts
-// lib/googleAnalytics.ts
-import { BetaAnalyticsDataClient } from '@google-analytics/data';
-import { getValidAccessToken } from './tokenManager';
-import { getWebsiteById } from '@/models';
-import { AuthorizationError } from '@/utils/errors';
-
-function cleanDomain(inputDomain: string): string {
-  let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
-  try {
-    const url = new URL(cleanedDomain);
-    cleanedDomain = url.hostname;
-  } catch {
-    // If it's not a valid URL, assume it's already just a domain
-  }
-  cleanedDomain = cleanedDomain.replace(/^www\./, '');
-  return cleanedDomain;
-}
-
-export async function fetchGA4Data(analytics: any, domain: string) {
-  try {
-    // List all GA4 properties
-    const propertiesResponse = await analytics.accountSummaries.list({
-      pageSize: 100  // Adjust this value based on the number of properties you expect
-    });
-    const properties = propertiesResponse.data.accountSummaries
-      .flatMap((account: any) => account.propertySummaries || [])
-      .filter((prop: any) => prop.property);
-
-    // Find the property that matches the domain
-    const property = properties.find((prop: any) => {
-      const propDisplayName = cleanDomain(prop.displayName);
-      const cleanedDomain = cleanDomain(domain);
-      return propDisplayName === cleanedDomain;
-    });
-
-    if (!property) {
-      console.log(`No matching GA4 property found for domain: ${domain}`);
-      return { propertyId: null, dataStreamId: null };
-    }
-
-    const propertyId = property.property.split('/').pop();
-
-    // List data streams for the found property
-    const dataStreamsResponse = await analytics.properties.dataStreams.list({
-      parent: `properties/${propertyId}`
-    });
-    const dataStreams = dataStreamsResponse.data.dataStreams || [];
-
-    // Find the first web data stream (or any if no web stream is found)
-    const dataStream = dataStreams.find((stream: any) => stream.type === 'WEB_DATA_STREAM') || dataStreams[0];
-
-    const dataStreamId = dataStream ? dataStream.name.split('/').pop() : null;
-
-    console.log(`Found GA4 data for ${domain}: Property ID: ${propertyId}, Data Stream ID: ${dataStreamId}`);
-
-    return {
-      propertyId: propertyId,
-      dataStreamId: dataStreamId
-    };
-  } catch (error) {
-    console.error(`Error fetching GA4 data for ${domain}:`, error);
-    return { propertyId: null, dataStreamId: null };
-  }
-}
-
-export async function getGA4AnalyticsData(websiteId: number, urls: string[]) {
-  try {
-    const { website } = await getWebsiteById(websiteId);
-    if (!website || !website.ga4_property_id) {
-      throw new Error('Website or GA4 property ID not found');
-    }
-
-    const accessToken = await getValidAccessToken(website.user_id);
-
-    console.log(`Fetching GA4 data for property ID: ${website.ga4_property_id}`);
-    console.log(`Using access token: ${accessToken.substring(0, 10)}...`);
-    console.log(`Querying for URLs:`, urls);
-
-    const response = await fetch(
-      `https://analyticsdata.googleapis.com/v1beta/properties/${website.ga4_property_id}:runReport`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          dateRanges: [{ startDate: '30daysAgo', endDate: 'today' }],
-          dimensions: [{ name: 'pagePath' }],
-          metrics: [
-            { name: 'screenPageViews' },
-            { name: 'engagementRate' },
-          ],
-          dimensionFilter: {
-            orGroup: {
-              expressions: urls.map(url => ({
-                filter: {
-                  fieldName: 'pagePath',
-                  stringFilter: {
-                    matchType: 'CONTAINS',
-                    value: url,
-                  },
-                },
-              })),
-            },
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Google Analytics API error (${response.status}):`, errorText);
-      throw new Error(`Google Analytics API responded with status ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    console.log('Raw API Response:', JSON.stringify(data, null, 2));
-
-    const result: { [key: string]: { impressions: number, clicks: number } } = {};
-
-    if (data.rows && data.rows.length > 0) {
-      data.rows.forEach((row: any) => {
-        const url = row.dimensionValues[0].value;
-        const impressions = parseInt(row.metricValues[0].value || '0', 10);
-        const engagementRate = parseFloat(row.metricValues[1].value || '0');
-        const clicks = Math.round(impressions * engagementRate);
-
-        result[url] = { impressions, clicks };
-      });
-    } else {
-      console.log('No data returned from Google Analytics API');
-    }
-
-    console.log('Processed result:', result);
-    return result;
-  } catch (error) {
-    console.error('Error fetching GA4 analytics data:', error);
-    if (error instanceof AuthorizationError) {
-      throw error;
-    }
-    throw new Error(`Failed to fetch analytics data: ${error.message}`);
-  }
-}
-
 // Filename: lib/googleSearchConsole.ts
 import { google } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
-import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite } from '@/models';
+import { JWT } from 'google-auth-library';
 import { IndexingStatus } from '@/types';
-import { fetchGA4Data } from './googleAnalytics';
+import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite, updatePageData } from '@/models';
 import CONFIG from '@/config';
 
-const oauth2Client = new OAuth2Client(
-  CONFIG.google.clientId,
-  CONFIG.google.clientSecret
-);
+const auth = new JWT({
+  email: CONFIG.google.clientEmail,
+  key: CONFIG.google.privateKey,
+  scopes: ['https://www.googleapis.com/auth/webmasters.readonly', 'https://www.googleapis.com/auth/indexing'],
+});
 
-async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any>, rateLimit: number) {
-  const results = [];
-  for (let i = 0; i < items.length; i += rateLimit) {
-    const batch = items.slice(i, i + rateLimit);
-    const batchResults = await Promise.all(batch.map(fetchFn));
-    results.push(...batchResults);
-    if (i + rateLimit < items.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between batches
+const searchconsole = google.searchconsole({ version: 'v1', auth });
+
+
+async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any>, rateLimit: number): Promise<any[]> {
+    const results = [];
+    for (let i = 0; i < items.length; i += rateLimit) {
+      const batch = items.slice(i, i + rateLimit);
+      const batchResults = await Promise.all(batch.map(fetchFn));
+      results.push(...batchResults);
+      if (i + rateLimit < items.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between batches
+      }
     }
+    return results;
+  }  
+
+export async function fetchAndStoreWebsites(userId: number): Promise<void> {
+    try {
+      const sites = await searchconsole.sites.list();
+      const { websites: existingWebsites } = await getWebsitesByUserId(userId);
+  
+      const updatedWebsites = new Set<string>();
+  
+      if (sites.data.siteEntry) {
+        for (const site of sites.data.siteEntry) {
+          const domain = site.siteUrl || ''; // Provide a default empty string if siteUrl is null or undefined
+          const existingWebsite = existingWebsites.find(w => w.domain === domain);
+  
+          if (existingWebsite) {
+            await updateWebsite(existingWebsite.id, {
+              enabled: existingWebsite.enabled,
+              auto_indexing_enabled: existingWebsite.auto_indexing_enabled,
+            });
+          } else if (domain) { // Only create a new website if domain is not an empty string
+            await createWebsite({
+              user_id: userId,
+              domain: domain,
+              enabled: false,
+              auto_indexing_enabled: false,
+            });
+          }
+  
+          if (domain) {
+            updatedWebsites.add(domain);
+          }
+        }
+      }
+  
+      for (const existingWebsite of existingWebsites) {
+        if (!updatedWebsites.has(existingWebsite.domain)) {
+          await updateWebsite(existingWebsite.id, { enabled: false });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching and storing websites:', error);
+      throw error;
+    }
+}
+
+export async function fetchBulkIndexingStatus(websiteId: number, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
+  const { website } = await getWebsiteById(websiteId);
+  if (!website) {
+    throw new Error('Website not found');
   }
+
+  const results = await rateLimitedFetch(urls, async (url) => {
+    try {
+      const response = await searchconsole.urlInspection.index.inspect({
+        requestBody: {
+          inspectionUrl: url,
+          siteUrl: website.domain,
+        },
+      });
+
+      const result = response.data.inspectionResult;
+      return {
+        url: url,
+        lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
+        indexingStatus: result?.indexStatusResult?.coverageState as IndexingStatus
+      };
+    } catch (error) {
+      console.error(`Error inspecting URL ${url}:`, error);
+      return {
+        url: url,
+        lastIndexedDate: null,
+        indexingStatus: 'error' as IndexingStatus
+      };
+    }
+  }, 100);
+
+  for (const result of results) {
+    await updatePageData(websiteId, result.url, result.indexingStatus, result.lastIndexedDate);
+  }
+
   return results;
 }
 
-export async function fetchAndStoreWebsites(userId: number, accessToken: string) {
-  try {
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-    });
-
-    const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
-    const analytics = google.analyticsadmin({ version: 'v1beta', auth: oauth2Client });
-
-    const sites = await searchconsole.sites.list();
-    const { websites: existingWebsites } = await getWebsitesByUserId(userId);
-
-    const updatedWebsites = new Set<string>();
-
-    if (sites.data.siteEntry) {
-      for (const site of sites.data.siteEntry) {
-        //const domain = cleanDomain(site.siteUrl);
-        const domain = site.siteUrl;
-        const ga4Data = await fetchGA4Data(analytics, domain);
-
-        const existingWebsite = existingWebsites.find(w => w.domain === domain);
-
-        if (existingWebsite) {
-          await updateWebsite(existingWebsite.id, {
-            ga4_property_id: ga4Data.propertyId,
-            ga4_data_stream_id: ga4Data.dataStreamId,
-            indexing_enabled: existingWebsite.indexing_enabled, // Preserve existing indexing status
-          });
-        } else {
-          await createWebsite({
-            user_id: userId,
-            domain: domain,
-            indexing_enabled: false, // New websites are set to false by default
-            ga4_property_id: ga4Data.propertyId,
-            ga4_data_stream_id: ga4Data.dataStreamId,
-          });
-        }
-
-        updatedWebsites.add(domain);
-      }
-    }
-
-    // For websites no longer in Google Search Console, we set indexing_enabled to false
-    for (const existingWebsite of existingWebsites) {
-      if (!updatedWebsites.has(existingWebsite.domain)) {
-        await updateWebsite(existingWebsite.id, { indexing_enabled: false });
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching and storing websites:', error);
-    throw error;
-  }
-}
-
-export async function fetchBulkIndexingStatus(websiteId: number, domain: string, accessToken: string, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
-  oauth2Client.setCredentials({
-    access_token: accessToken,
-  });
-
-  const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
-
-  try {
-    const fetchUrl = async (url: string) => {
-      try {
-        const response = await searchconsole.urlInspection.index.inspect({
-          requestBody: {
-            inspectionUrl: url,
-            siteUrl: domain,
-          },
-        });
-
-        const result = response.data.inspectionResult;
-        return {
+export async function submitUrlForIndexing(domain: string, url: string): Promise<any> {
+    const indexing = google.indexing({ version: 'v3', auth: auth });
+  
+    try {
+      const response = await indexing.urlNotifications.publish({
+        requestBody: {
           url: url,
-          lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
-          indexingStatus: result?.indexStatusResult?.coverageState
-        };
-      } catch (error) {
-        console.error(`Error inspecting URL ${url}:`, error);
-        return {
-          url: url,
-          lastIndexedDate: null,
-          indexingStatus: 'error' as IndexingStatus
-        };
-      }
-    };
+          type: 'URL_UPDATED',
+        },
+      });
+      console.log(`Submitted URL for indexing: ${url}`);
+      return response;
 
-    // Use rateLimitedFetch to process URLs with rate limiting
-    const results = await rateLimitedFetch(urls, fetchUrl, 100); // Process 100 URLs per second
-
-    return results;
-
-  } catch (error) {
-    console.error('Error fetching indexing status:', error);
-    throw error;
+    } catch (error) {
+      console.error(`Error submitting URL for indexing: ${url}`, error);
+      throw new Error('Failed to submit URL for indexing');
+    }
   }
-}
+  
 
-export async function submitUrlForIndexing(domain: string, url: string, accessToken: string): Promise<void> {
-  oauth2Client.setCredentials({
-    access_token: accessToken,
-  });
-
-  const indexing = google.indexing({ version: 'v3', auth: oauth2Client });
-
-  try {
-    await indexing.urlNotifications.publish({
-      requestBody: {
-        url: url,
-        type: 'URL_UPDATED',
-      },
-    });
-    console.log(`Submitted URL for indexing: ${url}`);
-  } catch (error) {
-    console.error(`Error submitting URL for indexing: ${url}`, error);
-    throw new Error('Failed to submit URL for indexing');
-  }
-}
-
-export async function getPageImpressionsAndClicks(websiteId: number, urls: string[], accessToken: string) {
-  const oauth2Client = new OAuth2Client();
-  oauth2Client.setCredentials({
-    access_token: accessToken,
-  });
-
-  const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
-
+export async function getPageImpressionsAndClicks(websiteId: number, urls: string[]) {
   try {
     const { website } = await getWebsiteById(websiteId);
     if (!website) {
@@ -2474,11 +2310,9 @@ export async function getPageImpressionsAndClicks(websiteId: number, urls: strin
         rowLimit: urls.length,
       },
     });
-    //console.log('Response: ', response.data.rows);
 
     const result: { [key: string]: { impressions: number, clicks: number } } = {};
 
-    // Initialize result with all input URLs set to zero impressions and clicks
     urls.forEach(url => {
       result[url] = { impressions: 0, clicks: 0 };
     });
@@ -2494,12 +2328,26 @@ export async function getPageImpressionsAndClicks(websiteId: number, urls: strin
         }
       });
     }
-    //console.log('Result: ', result);
     return result;
 
   } catch (error) {
     console.error('Error fetching Search Console data:', error);
     throw new Error('Failed to fetch Search Console data');
+  }
+}
+
+export async function verifyWebsiteOwnership(property: string): Promise<boolean> {
+  try {
+      const response = await searchconsole.sites.get({ siteUrl: property });
+      // If the service account has access, the property exists, and the response returns successfully.
+      if (response.data.siteUrl === property) {
+        return true;
+      }
+      return false;
+
+    } catch (error) {
+      console.error(`Error verifying website ownership for ${property}:`, error);
+      return false;
   }
 }
 
@@ -3423,7 +3271,11 @@ export async function getUserByEmail(email: string): Promise<{ user: User | null
   try {
     const query = 'SELECT * FROM users WHERE email = $1';
     const result = await pool.query(query, [email]);
-    return { user: result.rows[0] || null, statusCode: result.rows[0] ? 200 : 404 };
+    let user = result.rows[0] || null;
+    if (user) {
+      user.id = user.id.toString(); // Convert ID to string
+    }
+    return { user, statusCode: user ? 200 : 404 };
   } catch (error) {
     handleDatabaseError(error);
   }
@@ -3431,9 +3283,9 @@ export async function getUserByEmail(email: string): Promise<{ user: User | null
 
 export async function createUser(user: Partial<User>): Promise<{ user: User, statusCode: number }> {
   try {
-    const { name, email, google_id, access_token, refresh_token, expires_at } = user;
-    const query = 'INSERT INTO users (name, email, google_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *';
-    const result = await pool.query(query, [name, email, google_id, access_token, refresh_token, expires_at]);
+    const { name, email, google_id } = user;
+    const query = 'INSERT INTO users (name, email, google_id) VALUES ($1, $2, $3) RETURNING *';
+    const result = await pool.query(query, [name, email, google_id]);
     return { user: result.rows[0], statusCode: 201 };
   } catch (error) {
     handleDatabaseError(error);
@@ -3442,50 +3294,15 @@ export async function createUser(user: Partial<User>): Promise<{ user: User, sta
 
 export async function updateUser(id: number, user: Partial<User>): Promise<{ user: User, statusCode: number }> {
   try {
-    const { name, google_id, access_token, refresh_token, expires_at } = user;
-    const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), access_token = COALESCE($3, access_token), refresh_token = COALESCE($4, refresh_token), expires_at = COALESCE($5, expires_at), updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *';
-    const result = await pool.query(query, [name, google_id, access_token, refresh_token, expires_at, id]);
+    const { name, google_id } = user;
+    const query = 'UPDATE users SET name = COALESCE($1, name), google_id = COALESCE($2, google_id), updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *';
+    const result = await pool.query(query, [name, google_id, id]);
     if (result.rowCount === 0) {
       throw new DatabaseError('User not found');
     }
     return { user: result.rows[0], statusCode: 200 };
   } catch (error) {
     handleDatabaseError(error);
-  }
-}
-
-export async function updateUserTokens(userId: number, accessToken: string | null, refreshToken: string | null, expiresAt: string | null): Promise<void> {
-  try {
-    const query = `
-      UPDATE users
-      SET access_token = COALESCE($1, access_token),
-          refresh_token = COALESCE($2, refresh_token),
-          expires_at = COALESCE($3, expires_at),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
-    `;
-    await pool.query(query, [accessToken, refreshToken, expiresAt, userId]);
-  } catch (error) {
-    console.error('Error updating user tokens:', error);
-    throw error;
-  }
-}
-
-export async function getUserTokens(userId: number): Promise<{ accessToken: string, refreshToken: string, expiresAt: string } | null> {
-  try {
-    const query = 'SELECT access_token, refresh_token, expires_at FROM users WHERE id = $1';
-    const result = await pool.query(query, [userId]);
-    if (result.rows.length > 0) {
-      return {
-        accessToken: result.rows[0].access_token,
-        refreshToken: result.rows[0].refresh_token,
-        expiresAt: result.rows[0].expires_at
-      };
-    }
-    return null;
-  } catch (error) {
-    console.error('Error getting user tokens:', error);
-    throw error;
   }
 }
 
@@ -3523,7 +3340,7 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
   try {
     const query = `
       SELECT * FROM websites 
-      WHERE indexing_enabled = true 
+      WHERE enabled = true 
       AND (last_robots_scan IS NULL OR last_robots_scan < NOW() - INTERVAL '1 day')
     `;
     const result = await pool.query(query);
@@ -3535,9 +3352,9 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
 
 export async function createWebsite(website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
   try {
-    const { user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id } = website;
-    const query = 'INSERT INTO websites (user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id) VALUES ($1, $2, $3, $4, $5) RETURNING *';
-    const result = await pool.query(query, [user_id, domain, indexing_enabled, ga4_property_id, ga4_data_stream_id]);
+    const { user_id, domain, enabled, auto_indexing_enabled } = website;
+    const query = 'INSERT INTO websites (user_id, domain, enabled, auto_indexing_enabled) VALUES ($1, $2, $3, $4) RETURNING *';
+    const result = await pool.query(query, [user_id, domain, enabled, auto_indexing_enabled]);
     return { website: result.rows[0], statusCode: 201 };
   } catch (error) {
     handleDatabaseError(error);
@@ -3546,18 +3363,17 @@ export async function createWebsite(website: Partial<Website>): Promise<{ websit
 
 export async function updateWebsite(id: number, website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
   try {
-    const { domain, indexing_enabled, ga4_property_id, ga4_data_stream_id } = website;
+    const { domain, enabled, auto_indexing_enabled } = website;
     const query = `
       UPDATE websites 
       SET domain = COALESCE($1, domain), 
-          indexing_enabled = COALESCE($2, indexing_enabled),
-          ga4_property_id = COALESCE($3, ga4_property_id),
-          ga4_data_stream_id = COALESCE($4, ga4_data_stream_id),
+          enabled = COALESCE($2, enabled),      
+          auto_indexing_enabled = COALESCE($3, auto_indexing_enabled),
           updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $5 
+      WHERE id = $4 
       RETURNING *
     `;
-    const result = await pool.query(query, [domain, indexing_enabled, ga4_property_id, ga4_data_stream_id, id]);
+    const result = await pool.query(query, [domain, enabled, auto_indexing_enabled, id]);
     if (result.rowCount === 0) {
       throw new DatabaseError('Website not found');
     }
@@ -3783,12 +3599,6 @@ module.exports = nextConfig
 // Filename: types/index.ts
 // File: types/index.ts
 
-export interface UserTokens {
-  access_token: string | null;
-  refresh_token: string | null;
-  expires_at: string | null;
-}
-
 export interface User {
   id: number;
   email: string;
@@ -3805,10 +3615,9 @@ export interface Website {
   id: number;
   user_id: number;
   domain: string;
+  enabled: boolean;
+  auto_indexing_enabled: boolean;
   last_robots_scan: Date | null;
-  indexing_enabled: boolean;
-  ga4_property_id: string | null;
-  ga4_data_stream_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -3824,7 +3633,15 @@ export interface Page {
   updated_at: Date;
 }
   
-export type IndexingStatus = 'not_indexed' | 'pending' | 'indexed' | 'failed';
+export type IndexingStatus = 
+  'Indexed' | 
+  'Submitted and indexed' | 
+  'Submitted not indexed' | 
+  'Discovered not indexed' | 
+  'Crawled not indexed' | 
+  'Excluded noindex' | 
+  'Blocked robots' | 
+  'Duplicate without canonical';
 
 export interface IndexingJob {
   id: number;
@@ -3885,7 +3702,7 @@ declare module "next-auth" {
 
 // Filename: utils/apiUtils.ts
 // File: utils/apiUtils.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { AppError, DatabaseError, ValidationError, AuthenticationError, AuthorizationError, NotFoundError } from './errors';
 
 export async function handleApiError(error: unknown): Promise<NextResponse> {

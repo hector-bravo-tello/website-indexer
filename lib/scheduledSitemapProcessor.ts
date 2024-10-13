@@ -10,7 +10,6 @@ import {
   updateIndexingJobDetail
 } from '@/models';
 import { fetchBulkIndexingStatus, submitUrlForIndexing } from './googleSearchConsole';
-import { getValidAccessToken } from '@/lib/tokenManager';
 import { fetchUrl, extractSitemapUrls, parseSitemap } from './sitemapProcessor';
 
 const indexed: string = 'Submitted and indexed';
@@ -18,7 +17,6 @@ const indexed: string = 'Submitted and indexed';
 export async function processWebsiteForScheduledJob(website: Website): Promise<void> {
   try {
     const job = await createIndexingJob({ website_id: website.id, status: 'in_progress', total_pages: 0 });
-    const accessToken = await getValidAccessToken(website.user_id);
 
     const robotsTxtUrl = `https://${website.domain}/robots.txt`;
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
@@ -40,7 +38,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     const unchangedUrls = allPages.filter(page => existingUrls.has(page.url));
 
     const urlsToCheck = [...newUrls, ...unchangedUrls].map(page => page.url);
-    const indexingStatuses = await fetchBulkIndexingStatus(website.id, website.domain, accessToken, urlsToCheck);
+    const indexingStatuses = await fetchBulkIndexingStatus(website.id, website.domain, urlsToCheck);
 
     const pagesToUpdate = indexingStatuses.map(status => ({
       url: status.url,
@@ -52,7 +50,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
 
     for (const page of pagesToUpdate) {
       if (page.indexingStatus !== indexed) {
-        await submitUrlForIndexing(website.domain, page.url, accessToken);
+        await submitUrlForIndexing(website.domain, page.url);
         await createIndexingJobDetail({
           indexing_job_id: job.job.id,
           page_id: existingPages.find(p => p.url === page.url)?.id || 0,

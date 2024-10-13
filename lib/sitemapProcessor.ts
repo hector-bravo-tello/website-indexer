@@ -11,7 +11,6 @@ import {
   removePages
 } from '@/models';
 import { fetchBulkIndexingStatus } from './googleSearchConsole';
-import { getValidAccessToken } from './tokenManager';
 import { ValidationError } from '@/utils/errors';
 
 const parseXml = promisify(parseString);
@@ -109,8 +108,7 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
     const pagesToRemove = existingPages.pages.filter(page => !urls.has(page.url));
 
     // Fetch the actual indexing status and last indexed date from Google Search Console
-    const accessToken = await getValidAccessToken(userId);
-    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, accessToken, Array.from(urls));
+    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, Array.from(urls));
 
     // Combine sitemap data with indexing data
     const formattedPages = pages.map(page => {
@@ -118,7 +116,7 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
       return {
         url: page.url,
         lastIndexedDate: indexedPage?.lastIndexedDate || null,
-        indexingStatus: indexedPage?.indexingStatus || 'not_indexed' as IndexingStatus
+        indexingStatus: indexedPage?.indexingStatus || 'unknown' as IndexingStatus
       };
     });
 

@@ -1,155 +1,133 @@
 import { google } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
-import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite } from '@/models';
+import { JWT } from 'google-auth-library';
 import { IndexingStatus } from '@/types';
-import { fetchGA4Data } from './googleAnalytics';
+import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite, updatePageData } from '@/models';
 import CONFIG from '@/config';
 
-const oauth2Client = new OAuth2Client(
-  CONFIG.google.clientId,
-  CONFIG.google.clientSecret
-);
+const auth = new JWT({
+  email: CONFIG.google.clientEmail,
+  key: CONFIG.google.privateKey,
+  scopes: ['https://www.googleapis.com/auth/webmasters.readonly', 'https://www.googleapis.com/auth/indexing'],
+});
 
-async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any>, rateLimit: number) {
-  const results = [];
-  for (let i = 0; i < items.length; i += rateLimit) {
-    const batch = items.slice(i, i + rateLimit);
-    const batchResults = await Promise.all(batch.map(fetchFn));
-    results.push(...batchResults);
-    if (i + rateLimit < items.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between batches
+const searchconsole = google.searchconsole({ version: 'v1', auth });
+
+
+async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any>, rateLimit: number): Promise<any[]> {
+    const results = [];
+    for (let i = 0; i < items.length; i += rateLimit) {
+      const batch = items.slice(i, i + rateLimit);
+      const batchResults = await Promise.all(batch.map(fetchFn));
+      results.push(...batchResults);
+      if (i + rateLimit < items.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between batches
+      }
     }
+    return results;
+  }  
+
+export async function fetchAndStoreWebsites(userId: number): Promise<void> {
+    try {
+      const sites = await searchconsole.sites.list();
+      const { websites: existingWebsites } = await getWebsitesByUserId(userId);
+  
+      const updatedWebsites = new Set<string>();
+  
+      if (sites.data.siteEntry) {
+        for (const site of sites.data.siteEntry) {
+          const domain = site.siteUrl || ''; // Provide a default empty string if siteUrl is null or undefined
+          const existingWebsite = existingWebsites.find(w => w.domain === domain);
+  
+          if (existingWebsite) {
+            await updateWebsite(existingWebsite.id, {
+              enabled: existingWebsite.enabled,
+              auto_indexing_enabled: existingWebsite.auto_indexing_enabled,
+            });
+          } else if (domain) { // Only create a new website if domain is not an empty string
+            await createWebsite({
+              user_id: userId,
+              domain: domain,
+              enabled: false,
+              auto_indexing_enabled: false,
+            });
+          }
+  
+          if (domain) {
+            updatedWebsites.add(domain);
+          }
+        }
+      }
+  
+      for (const existingWebsite of existingWebsites) {
+        if (!updatedWebsites.has(existingWebsite.domain)) {
+          await updateWebsite(existingWebsite.id, { enabled: false });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching and storing websites:', error);
+      throw error;
+    }
+}
+
+export async function fetchBulkIndexingStatus(websiteId: number, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
+  const { website } = await getWebsiteById(websiteId);
+  if (!website) {
+    throw new Error('Website not found');
   }
+
+  const results = await rateLimitedFetch(urls, async (url) => {
+    try {
+      const response = await searchconsole.urlInspection.index.inspect({
+        requestBody: {
+          inspectionUrl: url,
+          siteUrl: website.domain,
+        },
+      });
+
+      const result = response.data.inspectionResult;
+      return {
+        url: url,
+        lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
+        indexingStatus: result?.indexStatusResult?.coverageState as IndexingStatus
+      };
+    } catch (error) {
+      console.error(`Error inspecting URL ${url}:`, error);
+      return {
+        url: url,
+        lastIndexedDate: null,
+        indexingStatus: 'error' as IndexingStatus
+      };
+    }
+  }, 100);
+
+  for (const result of results) {
+    await updatePageData(websiteId, result.url, result.indexingStatus, result.lastIndexedDate);
+  }
+
   return results;
 }
 
-export async function fetchAndStoreWebsites(userId: number, accessToken: string) {
-  try {
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-    });
-
-    const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
-    const analytics = google.analyticsadmin({ version: 'v1beta', auth: oauth2Client });
-
-    const sites = await searchconsole.sites.list();
-    const { websites: existingWebsites } = await getWebsitesByUserId(userId);
-
-    const updatedWebsites = new Set<string>();
-
-    if (sites.data.siteEntry) {
-      for (const site of sites.data.siteEntry) {
-        //const domain = cleanDomain(site.siteUrl);
-        const domain = site.siteUrl;
-        const ga4Data = await fetchGA4Data(analytics, domain);
-
-        const existingWebsite = existingWebsites.find(w => w.domain === domain);
-
-        if (existingWebsite) {
-          await updateWebsite(existingWebsite.id, {
-            ga4_property_id: ga4Data.propertyId,
-            ga4_data_stream_id: ga4Data.dataStreamId,
-            indexing_enabled: existingWebsite.indexing_enabled, // Preserve existing indexing status
-          });
-        } else {
-          await createWebsite({
-            user_id: userId,
-            domain: domain,
-            indexing_enabled: false, // New websites are set to false by default
-            ga4_property_id: ga4Data.propertyId,
-            ga4_data_stream_id: ga4Data.dataStreamId,
-          });
-        }
-
-        updatedWebsites.add(domain);
-      }
-    }
-
-    // For websites no longer in Google Search Console, we set indexing_enabled to false
-    for (const existingWebsite of existingWebsites) {
-      if (!updatedWebsites.has(existingWebsite.domain)) {
-        await updateWebsite(existingWebsite.id, { indexing_enabled: false });
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching and storing websites:', error);
-    throw error;
-  }
-}
-
-export async function fetchBulkIndexingStatus(websiteId: number, domain: string, accessToken: string, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
-  oauth2Client.setCredentials({
-    access_token: accessToken,
-  });
-
-  const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
-
-  try {
-    const fetchUrl = async (url: string) => {
-      try {
-        const response = await searchconsole.urlInspection.index.inspect({
-          requestBody: {
-            inspectionUrl: url,
-            siteUrl: domain,
-          },
-        });
-
-        const result = response.data.inspectionResult;
-        return {
+export async function submitUrlForIndexing(domain: string, url: string): Promise<any> {
+    const indexing = google.indexing({ version: 'v3', auth: auth });
+  
+    try {
+      const response = await indexing.urlNotifications.publish({
+        requestBody: {
           url: url,
-          lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
-          indexingStatus: result?.indexStatusResult?.coverageState
-        };
-      } catch (error) {
-        console.error(`Error inspecting URL ${url}:`, error);
-        return {
-          url: url,
-          lastIndexedDate: null,
-          indexingStatus: 'error' as IndexingStatus
-        };
-      }
-    };
+          type: 'URL_UPDATED',
+        },
+      });
+      console.log(`Submitted URL for indexing: ${url}`);
+      return response;
 
-    // Use rateLimitedFetch to process URLs with rate limiting
-    const results = await rateLimitedFetch(urls, fetchUrl, 100); // Process 100 URLs per second
-
-    return results;
-
-  } catch (error) {
-    console.error('Error fetching indexing status:', error);
-    throw error;
+    } catch (error) {
+      console.error(`Error submitting URL for indexing: ${url}`, error);
+      throw new Error('Failed to submit URL for indexing');
+    }
   }
-}
+  
 
-export async function submitUrlForIndexing(domain: string, url: string, accessToken: string): Promise<void> {
-  oauth2Client.setCredentials({
-    access_token: accessToken,
-  });
-
-  const indexing = google.indexing({ version: 'v3', auth: oauth2Client });
-
-  try {
-    await indexing.urlNotifications.publish({
-      requestBody: {
-        url: url,
-        type: 'URL_UPDATED',
-      },
-    });
-    console.log(`Submitted URL for indexing: ${url}`);
-  } catch (error) {
-    console.error(`Error submitting URL for indexing: ${url}`, error);
-    throw new Error('Failed to submit URL for indexing');
-  }
-}
-
-export async function getPageImpressionsAndClicks(websiteId: number, urls: string[], accessToken: string) {
-  const oauth2Client = new OAuth2Client();
-  oauth2Client.setCredentials({
-    access_token: accessToken,
-  });
-
-  const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
-
+export async function getPageImpressionsAndClicks(websiteId: number, urls: string[]) {
   try {
     const { website } = await getWebsiteById(websiteId);
     if (!website) {
@@ -169,11 +147,9 @@ export async function getPageImpressionsAndClicks(websiteId: number, urls: strin
         rowLimit: urls.length,
       },
     });
-    //console.log('Response: ', response.data.rows);
 
     const result: { [key: string]: { impressions: number, clicks: number } } = {};
 
-    // Initialize result with all input URLs set to zero impressions and clicks
     urls.forEach(url => {
       result[url] = { impressions: 0, clicks: 0 };
     });
@@ -189,11 +165,25 @@ export async function getPageImpressionsAndClicks(websiteId: number, urls: strin
         }
       });
     }
-    //console.log('Result: ', result);
     return result;
 
   } catch (error) {
     console.error('Error fetching Search Console data:', error);
     throw new Error('Failed to fetch Search Console data');
+  }
+}
+
+export async function verifyWebsiteOwnership(property: string): Promise<boolean> {
+  try {
+      const response = await searchconsole.sites.get({ siteUrl: property });
+      // If the service account has access, the property exists, and the response returns successfully.
+      if (response.data.siteUrl === property) {
+        return true;
+      }
+      return false;
+
+    } catch (error) {
+      console.error(`Error verifying website ownership for ${property}:`, error);
+      return false;
   }
 }

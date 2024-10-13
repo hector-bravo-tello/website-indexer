@@ -3,7 +3,6 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { getWebsiteById } from '@/models';
 import { getPageImpressionsAndClicks } from '@/lib/googleSearchConsole';
-import { getValidAccessToken } from '@/lib/tokenManager';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 
@@ -27,15 +26,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  try {
-    const accessToken = await getValidAccessToken(website.user_id);
-    const analyticsData = await getPageImpressionsAndClicks(websiteId, urls, accessToken);
-    return NextResponse.json({ 
-      data: analyticsData, 
-      message: Object.keys(analyticsData).length === 0 ? 'No data returned from Google Search Console' : 'Data retrieved successfully' 
-    });
-  } catch (error) {
-    console.error('Error in analytics API route:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const analyticsData = await getPageImpressionsAndClicks(websiteId, urls);
+  return NextResponse.json({ 
+    data: analyticsData, 
+    message: Object.keys(analyticsData).length === 0 ? 'No data returned from Google Search Console' : 'Data retrieved successfully' 
+  });
 });

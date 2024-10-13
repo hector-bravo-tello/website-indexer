@@ -18,16 +18,14 @@ import {
   TablePagination, 
   TableSortLabel,
   Button,
-  Switch,
-  IconButton,
-  Tooltip,
-  Chip
+  Switch
 } from '@mui/material';
-import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
+import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { withAuth } from '@/components/withAuth';
 import { Website } from '@/types';
 import { useError } from '@/lib/useError';
+
 
 const Dashboard: React.FC = () => {
   const [websites, setWebsites] = useState<Website[] | null>(null);
@@ -49,6 +47,7 @@ const Dashboard: React.FC = () => {
   ) {
     return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
   });
+  
 
   useEffect(() => {
     fetchWebsites();
@@ -58,6 +57,7 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       const response = await fetch('/api/websites');
+      console.log(response);
       if (!response.ok) {
         throw new Error('Failed to fetch websites');
       }
@@ -71,7 +71,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleToggleEnabled = async (websiteId: number, currentStatus: boolean) => {
+  const handleToggleIndexing = async (websiteId: number, currentStatus: boolean) => {
     try {
       const response = await fetch(`/api/websites/${websiteId}/toggle`, {
         method: 'POST',
@@ -86,7 +86,7 @@ const Dashboard: React.FC = () => {
       const data = await response.json();
       setWebsites(prevWebsites => 
         prevWebsites?.map(website => 
-          website.id === websiteId ? { ...website, enabled: !currentStatus } : website
+          website.id === websiteId ? { ...website, indexing_enabled: !currentStatus } : website
         ) || null
       );
       setSnackbar({
@@ -100,70 +100,6 @@ const Dashboard: React.FC = () => {
       setSnackbar({
         open: true,
         message: 'Failed to update indexing status',
-        severity: 'error',
-      });
-    }
-  };
-
-  const handleToggleAutoIndexing = async (websiteId: number, currentStatus: boolean) => {
-    try {
-      const response = await fetch(`/api/websites/${websiteId}/toggle`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ autoIndexing: !currentStatus }),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to toggle auto-indexing');
-      }
-      const data = await response.json();
-      setWebsites(prevWebsites => 
-        prevWebsites?.map(website => 
-          website.id === websiteId ? { ...website, auto_indexing_enabled: !currentStatus } : website
-        ) || null
-      );
-      setSnackbar({
-        open: true,
-        message: data.message,
-        severity: 'success',
-      });
-    } catch (error) {
-      console.error('Error toggling auto-indexing:', error);
-      setError('Failed to update auto-indexing status. Please try again later.');
-      setSnackbar({
-        open: true,
-        message: 'Failed to update auto-indexing status',
-        severity: 'error',
-      });
-    }
-  };
-
-  const handleVerifyOwnershipAccess = async (websiteId: number) => {
-    try {
-      const response = await fetch(`/api/websites/${websiteId}/verify-ownership`, {
-        method: 'GET',
-      });
-      if (!response.ok) {
-        throw new Error('Failed to verify ownsership access');
-      }
-      const data = await response.json();
-      setWebsites(prevWebsites => 
-        prevWebsites?.map(website => 
-          website.id === websiteId ? { ...website, is_owner: data.is_owner } : website
-        ) || null
-      );
-      setSnackbar({
-        open: true,
-        message: data.is_owner ? 'Ownership verified successfully' : 'Service account has no ownership permissions',
-        severity: data.is_owner ? 'success' : 'error',
-      });
-    } catch (error) {
-      console.error('Error verifying access:', error);
-      setError('Failed to verify access. Please try again later.');
-      setSnackbar({
-        open: true,
-        message: 'Failed to verify access',
         severity: 'error',
       });
     }
@@ -244,17 +180,6 @@ const Dashboard: React.FC = () => {
     return 0;
   });
 
-  const renderOwnershipChip = (isOwner: boolean | null) => {
-    if (isOwner === null) {
-      <Chip label="Not Owner" color="default" variant="outlined" />
-    }
-    return isOwner ? (
-      <Chip label="Owner" color="success" variant="outlined" />
-    ) : (
-      <Chip label="Not Owner" color="default" variant="outlined" />
-    );
-  };
-
   const paginatedWebsites = sortedWebsites?.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   if (loading) {
@@ -293,9 +218,6 @@ const Dashboard: React.FC = () => {
                     Website
                   </TableSortLabel>
                 </TableCell>
-                <TableCell>Enabled</TableCell>
-                <TableCell>Access</TableCell>
-                <TableCell>Auto-indexing</TableCell>
                 <TableCell>
                   <TableSortLabel
                     active={orderBy === 'last_robots_scan'}
@@ -305,49 +227,47 @@ const Dashboard: React.FC = () => {
                     Last Scanned
                   </TableSortLabel>
                 </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={orderBy === 'indexing_enabled'}
+                    direction={orderBy === 'indexing_enabled' ? order : 'asc'}
+                    onClick={() => handleRequestSort('indexing_enabled')}
+                  >
+                    Auto-Indexing
+                  </TableSortLabel>
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {paginatedWebsites?.map((website) => (
                 <TableRow key={website.id}>
                   <TableCell>
-                    <Link href={`/website/${website.id}`} passHref>
-                      <Typography 
-                        component="a" 
-                        sx={{ 
-                          color: 'primary.main', 
-                          textDecoration: 'none',
-                          '&:hover': {
-                            textDecoration: 'underline',
-                          },
-                        }}
-                      >
-                        {extractDomain(website.domain)}
-                      </Typography>
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={website.enabled}
-                      onChange={() => handleToggleEnabled(website.id, website.enabled)}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    {renderOwnershipChip(website.is_owner)}
-                    <Tooltip title="Refresh access">
-                      <IconButton onClick={() => handleVerifyOwnershipAccess(website.id)} size="small">
-                        <RefreshIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={website.auto_indexing_enabled}
-                      onChange={() => handleToggleAutoIndexing(website.id, website.auto_indexing_enabled)}
-                      disabled={!website.is_owner}
-                    />
+                    {website.indexing_enabled ? (
+                      <Link href={`/website/${website.id}`} passHref>
+                        <Typography 
+                          component="a" 
+                          sx={{ 
+                            color: 'primary.main', 
+                            textDecoration: 'none',
+                            '&:hover': {
+                              textDecoration: 'underline',
+                            },
+                          }}
+                        >
+                          {extractDomain(website.domain)}
+                        </Typography>
+                      </Link>
+                    ) : (
+                      extractDomain(website.domain)
+                    )}
                   </TableCell>
                   <TableCell>{formatLastScanned(website.last_robots_scan)}</TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={website.indexing_enabled}
+                      onChange={() => handleToggleIndexing(website.id, website.indexing_enabled)}
+                    />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

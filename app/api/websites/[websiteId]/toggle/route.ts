@@ -31,32 +31,36 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const body = await request.json();
-  const { enabled } = body;
+  const { enabled, auto_indexing_enabled } = body;
 
-  if (typeof enabled !== 'boolean') {
-    throw new ValidationError('Invalid input: enabled must be a boolean');
+  if (typeof enabled !== 'boolean' && typeof auto_indexing_enabled !== 'boolean') {
+    throw new ValidationError('Invalid request body. Expected "enabled" or "auto_indexing_enabled" boolean field.');
   }
 
-  const shouldRunJob = enabled && (
-    !website.last_robots_scan || 
-    new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000
-  );
+  const { website: updatedWebsite } = await updateWebsite(websiteId, { enabled: enabled, auto_indexing_enabled: auto_indexing_enabled });
 
-  const { website: updatedWebsite } = await updateWebsite(websiteId, { indexing_enabled: enabled });
+  let message: string = '';
+  let shouldRunJob: boolean = false;
 
-  let message = '';
   if (enabled) {
-    message = 'Auto-indexing enabled.';
+    if (auto_indexing_enabled) {
+      message = 'Website enabled. Auto-indexing enabled.';
+      shouldRunJob = !website.last_robots_scan || new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000;
+    } else { 
+      message = 'Website enabled. Auto-indexing disabled.'; 
+    }
+
     if (shouldRunJob) {
       try {
         await jobQueue.addJob(websiteId, 'ui');
         message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
+
       } catch (error) {
         console.error(`Failed to start indexing job for website ${websiteId}:`, error);
       }
     }
   } else {  
-    message = 'Auto-indexing disabled.';
+    message = 'Website disabled.';
   }
 
   return NextResponse.json({ 

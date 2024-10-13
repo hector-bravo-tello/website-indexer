@@ -1,11 +1,5 @@
 // File: types/index.ts
 
-export interface UserTokens {
-  access_token: string | null;
-  refresh_token: string | null;
-  expires_at: string | null;
-}
-
 export interface User {
   id: number;
   email: string;
@@ -22,10 +16,10 @@ export interface Website {
   id: number;
   user_id: number;
   domain: string;
+  enabled: boolean;
+  auto_indexing_enabled: boolean;
+  is_owner: boolean | null;
   last_robots_scan: Date | null;
-  indexing_enabled: boolean;
-  ga4_property_id: string | null;
-  ga4_data_stream_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -41,7 +35,15 @@ export interface Page {
   updated_at: Date;
 }
   
-export type IndexingStatus = 'not_indexed' | 'pending' | 'indexed' | 'failed';
+export type IndexingStatus = 
+  'Indexed' | 
+  'Submitted and indexed' | 
+  'Submitted not indexed' | 
+  'Discovered not indexed' | 
+  'Crawled not indexed' | 
+  'Excluded noindex' | 
+  'Blocked robots' | 
+  'Duplicate without canonical';
 
 export interface IndexingJob {
   id: number;
