@@ -12,7 +12,6 @@ const auth = new JWT({
 
 const searchconsole = google.searchconsole({ version: 'v1', auth });
 
-
 async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any>, rateLimit: number): Promise<any[]> {
     const results = [];
     for (let i = 0; i < items.length; i += rateLimit) {

@@ -2,7 +2,7 @@ import axios from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import jobQueue from '@/lib/jobQueue';
-import { Website, IndexingStatus } from '@/types';
+import { Website, Page, IndexingStatus } from '@/types';
 import { 
   getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
@@ -30,9 +30,9 @@ function cleanDomain(inputDomain: string): string {
 // Function to queue the website processing as background jobs
 export async function scheduleSitemapProcessing(): Promise<void> {
   try {
-    const websites = await getWebsitesForIndexing();
+    const { websites } = await getWebsitesForIndexing();
     for (const website of websites) {
-      await jobQueue.addJob(website.id);
+      await jobQueue.addJob(website.id, 'scheduled');
     }
   } catch (error) {
     console.error('Error in scheduled sitemap processing:', error);
@@ -108,7 +108,7 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
     const pagesToRemove = existingPages.pages.filter(page => !urls.has(page.url));
 
     // Fetch the actual indexing status and last indexed date from Google Search Console
-    const indexedPages = await fetchBulkIndexingStatus(websiteId, domain, Array.from(urls));
+    const indexedPages = await fetchBulkIndexingStatus(websiteId, Array.from(urls));
 
     // Combine sitemap data with indexing data
     const formattedPages = pages.map(page => {
@@ -137,9 +137,9 @@ async function processSitemap(websiteId: number, domain: string, sitemapUrl: str
 }
 
 // Function to parse the sitemap XML and extract URLs
-export async function parseSitemap(sitemapContent: string): Promise<{ url: string }[]> {
+export async function parseSitemap(sitemapContent: string): Promise<Pick<Page, 'url'>[]> {
   try {
-    const result = await parseXml(sitemapContent);
+    const result: any = await parseXml(sitemapContent);
     if (result.sitemapindex) {
       // Sitemap index file containing multiple sitemaps
       const sitemapUrls = result.sitemapindex.sitemap.map((sitemap: any) => sitemap.loc[0]);

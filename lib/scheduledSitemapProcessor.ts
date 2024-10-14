@@ -22,7 +22,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
     const sitemapUrls = extractSitemapUrls(robotsTxtContent);
 
-    let allPages: Page[] = [];
+    let allPages: Pick<Page, 'url'>[] = [];
     for (const sitemapUrl of sitemapUrls) {
       const sitemapContent = await fetchUrl(sitemapUrl);
       const pages = await parseSitemap(sitemapContent);
@@ -38,7 +38,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     const unchangedUrls = allPages.filter(page => existingUrls.has(page.url));
 
     const urlsToCheck = [...newUrls, ...unchangedUrls].map(page => page.url);
-    const indexingStatuses = await fetchBulkIndexingStatus(website.id, website.domain, urlsToCheck);
+    const indexingStatuses = await fetchBulkIndexingStatus(website.id, urlsToCheck);
 
     const pagesToUpdate = indexingStatuses.map(status => ({
       url: status.url,
@@ -54,7 +54,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
         await createIndexingJobDetail({
           indexing_job_id: job.job.id,
           page_id: existingPages.find(p => p.url === page.url)?.id || 0,
-          status: 'pending'
+          status: 'Submitted'
         });
       }
     }

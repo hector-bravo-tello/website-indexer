@@ -37,6 +37,7 @@ export interface Page {
   
 export type IndexingStatus = 
   'Indexed' | 
+  'Submitted' |
   'Submitted and indexed' | 
   'Submitted not indexed' | 
   'Discovered not indexed' | 

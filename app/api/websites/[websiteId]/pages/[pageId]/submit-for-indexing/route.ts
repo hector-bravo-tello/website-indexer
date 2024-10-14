@@ -3,7 +3,6 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { getWebsiteById, getPageById, updatePageData } from '@/models';
 import { submitUrlForIndexing } from '@/lib/googleSearchConsole';
-import { getValidAccessToken } from '@/lib/tokenManager';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 
