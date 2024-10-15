@@ -1,10 +1,8 @@
 import axios from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
-import jobQueue from '@/lib/jobQueue';
 import { Website, Page, IndexingStatus } from '@/types';
 import { 
-  getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
   updateWebsiteRobotsScan, 
   getPagesByWebsiteId,
@@ -15,7 +13,7 @@ import { ValidationError } from '@/utils/errors';
 
 const parseXml = promisify(parseString);
 
-function cleanDomain(inputDomain: string): string {
+export function cleanDomain(inputDomain: string): string {
   let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
   try {
     const url = new URL(cleanedDomain);
@@ -25,18 +23,6 @@ function cleanDomain(inputDomain: string): string {
   }
   cleanedDomain = cleanedDomain.replace(/^www\./, '');
   return cleanedDomain;
-}
-
-// Function to queue the website processing as background jobs
-export async function scheduleSitemapProcessing(): Promise<void> {
-  try {
-    const { websites } = await getWebsitesForIndexing();
-    for (const website of websites) {
-      await jobQueue.addJob(website.id, 'scheduled');
-    }
-  } catch (error) {
-    console.error('Error in scheduled sitemap processing:', error);
-  }
 }
 
 // Function to process a single website, called as part of the background job

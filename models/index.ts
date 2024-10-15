@@ -90,7 +90,7 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
     const query = `
       SELECT * FROM websites 
       WHERE enabled = true 
-      AND (last_robots_scan IS NULL OR last_robots_scan < NOW() - INTERVAL '1 day')
+      AND (last_robots_scan IS NULL OR last_robots_scan < NOW() - INTERVAL '21 hours')
     `;
     const result = await pool.query(query);
     return { websites: result.rows, statusCode: 200 };

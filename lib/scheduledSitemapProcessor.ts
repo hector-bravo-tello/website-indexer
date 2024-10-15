@@ -5,10 +5,11 @@ import {
   removePages,
   createIndexingJob,
   updateIndexingJob,
-  createIndexingJobDetail
+  createIndexingJobDetail,
+  updateWebsiteRobotsScan
 } from '@/models';
 import { fetchBulkIndexingStatus, submitUrlForIndexing } from './googleSearchConsole';
-import { fetchUrl, extractSitemapUrls, parseSitemap, filterSitemaps } from './sitemapProcessor';
+import { fetchUrl, extractSitemapUrls, parseSitemap, filterSitemaps, cleanDomain } from './sitemapProcessor';
 import { promisify } from 'util';
 
 const delay = promisify(setTimeout);
@@ -18,7 +19,8 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
   try {
     const job = await createIndexingJob({ website_id: website.id, status: 'in_progress', total_pages: 0 });
 
-    const robotsTxtUrl = `https://${website.domain}/robots.txt`;
+    const cleanedDomain = cleanDomain(website.domain);
+    const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
     const allSitemapUrls = extractSitemapUrls(robotsTxtContent);
     const filteredSitemapUrls = filterSitemaps(allSitemapUrls);
@@ -31,10 +33,14 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
       allPages = allPages.concat(pages);
     }
 
+    // get websites pages from database
     const { pages: existingPages } = await getPagesByWebsiteId(website.id, true);
-    const existingUrls = new Set(existingPages.map(page => page.url));  // from database
-    const currentUrls = new Set(allPages.map(page => page.url));        // from sitemap
+    const existingUrls = new Set(existingPages.map(page => page.url));
 
+    // website pages from sitemaps
+    const currentUrls = new Set(allPages.map(page => page.url));
+
+    // get new, removed and unchanged urls
     const newUrls = allPages.filter(page => !existingUrls.has(page.url));
     const removedUrls = existingPages.filter(page => !currentUrls.has(page.url));
     const unchangedUrls = allPages.filter(page => existingUrls.has(page.url));
@@ -78,6 +84,9 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     if (removedUrls.length > 0) {
       await removePages(website.id, removedUrls.map(page => page.id));
     }
+
+    // Update the last website scanned date
+    await updateWebsiteRobotsScan(website.id);
 
     // update the the Indexing Job completion
     await updateIndexingJob(job.job.id, { 
