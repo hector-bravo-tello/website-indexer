@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from '@/lib/authOptions';
 import { getWebsiteById, getPageById, updatePageData } from '@/models';
 import { submitUrlForIndexing } from '@/lib/googleSearchConsole';
 import { withErrorHandling } from '@/utils/apiUtils';

@@ -1,12 +1,12 @@
 // File: app/api/websites/refresh/route.ts
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from '@/lib/authOptions';
 import { fetchAndStoreWebsites } from '@/lib/googleSearchConsole';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError } from '@/utils/errors';
 
-export const POST = withErrorHandling(async (request: NextRequest) => {
+export const POST = withErrorHandling(async () => {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user?.id) {

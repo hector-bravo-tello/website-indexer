@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   Container, 
@@ -24,12 +24,18 @@ import {
   Chip
 } from '@mui/material';
 import MuiAlert, { AlertProps } from '@mui/material/Alert';
-import { Refresh as RefreshIcon } from '@mui/icons-material';
-import { withAuth } from '@/components/withAuth';
+import { Refresh as RefreshIcon, Info as InfoIcon } from '@mui/icons-material';
+import { WithAuth } from '@/components/WithAuth';
+import { PermissionsModal } from '@/components/PermissionsModal';
 import { Website } from '@/types';
 import { useError } from '@/lib/useError';
+import CONFIG from '@/config';
+
+console.log("Client email:", CONFIG.google.clientEmail);
 
 const Dashboard: React.FC = () => {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [currentWebsiteId, setCurrentWebsiteId] = useState<number | null>(null);
   const [websites, setWebsites] = useState<Website[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -41,6 +47,7 @@ const Dashboard: React.FC = () => {
     message: '',
     severity: 'success',
   });
+  const [serviceAccountEmail, setServiceAccountEmail] = useState('');
   const setError = useError();
 
   const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
@@ -50,11 +57,22 @@ const Dashboard: React.FC = () => {
     return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
   });
 
-  useEffect(() => {
-    fetchWebsites();
-  }, []);
+  const fetchServiceAccountEmail = useCallback(async () => {
+    try {
+      const response = await fetch('/api/sae');
+      if (!response.ok) {
+        throw new Error('Failed to fetch service account email');
+      }
+      const data = await response.json();
+      setServiceAccountEmail(data.email);
 
-  const fetchWebsites = async () => {
+    } catch (error) {
+      console.error('Error fetching service account email:', error);
+      setError('Failed to load service account email. Please try again later.');
+    }
+  }, [setError]);
+
+  const fetchWebsites = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch('/api/websites');
@@ -69,7 +87,13 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [setError]);
+
+
+  useEffect(() => {
+    fetchWebsites();
+    fetchServiceAccountEmail();
+  }, [fetchWebsites, fetchServiceAccountEmail]);
 
   const handleToggleEnabled = async (websiteId: number, currentStatus: boolean) => {
     try {
@@ -112,7 +136,7 @@ const Dashboard: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ autoIndexing: !currentStatus }),
+        body: JSON.stringify({ auto_indexing_enabled: !currentStatus }),
       });
       if (!response.ok) {
         throw new Error('Failed to toggle auto-indexing');
@@ -139,13 +163,20 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleVerifyOwnershipAccess = async (websiteId: number) => {
+  const handleRecheckPermissions = async () => {
+    if (currentWebsiteId) {
+      await handleVerifyOwnershipPermissions(currentWebsiteId);
+      setModalOpen(false);
+    }
+  };
+
+  const handleVerifyOwnershipPermissions = async (websiteId: number) => {
     try {
       const response = await fetch(`/api/websites/${websiteId}/verify-ownership`, {
         method: 'GET',
       });
       if (!response.ok) {
-        throw new Error('Failed to verify ownsership access');
+        throw new Error('Failed to verify ownsership permissions');
       }
       const data = await response.json();
       setWebsites(prevWebsites => 
@@ -159,11 +190,11 @@ const Dashboard: React.FC = () => {
         severity: data.is_owner ? 'success' : 'error',
       });
     } catch (error) {
-      console.error('Error verifying access:', error);
-      setError('Failed to verify access. Please try again later.');
+      console.error('Error verifying permissions:', error);
+      setError('Failed to verify permissions. Please try again later.');
       setSnackbar({
         open: true,
-        message: 'Failed to verify access',
+        message: 'Failed to verify permissions',
         severity: 'error',
       });
     }
@@ -271,13 +302,24 @@ const Dashboard: React.FC = () => {
         <Typography variant="h4" component="h1">
           Dashboard
         </Typography>
-        <Button
-          startIcon={<RefreshIcon />}
-          onClick={handleRefresh}
-          variant="outlined"
-        >
-          Refresh from Google Search Console
-        </Button>
+        <Box>
+          <Button
+            startIcon={<InfoIcon />}
+            onClick={() => setModalOpen(true)}
+            variant="outlined"
+            color="secondary"
+            sx={{ mr: 2 }}
+          >
+            Grant Ownership Permissions
+          </Button>
+          <Button
+            startIcon={<RefreshIcon />}
+            onClick={handleRefresh}
+            variant="outlined"
+          >
+            Refresh from Google Search Console
+          </Button>
+        </Box>
       </Box>
       {websites && (
         <TableContainer component={Paper}>
@@ -294,7 +336,7 @@ const Dashboard: React.FC = () => {
                   </TableSortLabel>
                 </TableCell>
                 <TableCell>Enabled</TableCell>
-                <TableCell>Access</TableCell>
+                <TableCell>Permissions</TableCell>
                 <TableCell>Auto-indexing</TableCell>
                 <TableCell>
                   <TableSortLabel
@@ -311,6 +353,7 @@ const Dashboard: React.FC = () => {
               {paginatedWebsites?.map((website) => (
                 <TableRow key={website.id}>
                   <TableCell>
+                    {website.enabled ? (
                     <Link href={`/website/${website.id}`} passHref>
                       <Typography 
                         component="a" 
@@ -325,6 +368,9 @@ const Dashboard: React.FC = () => {
                         {extractDomain(website.domain)}
                       </Typography>
                     </Link>
+                    ) : (
+                       extractDomain(website.domain)
+                    )}
                   </TableCell>
                   <TableCell>
                     <Switch
@@ -334,8 +380,8 @@ const Dashboard: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     {renderOwnershipChip(website.is_owner)}
-                    <Tooltip title="Refresh access">
-                      <IconButton onClick={() => handleVerifyOwnershipAccess(website.id)} size="small">
+                    <Tooltip title="Refresh Permissions">
+                      <IconButton onClick={() => handleVerifyOwnershipPermissions(website.id)} size="small">
                         <RefreshIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
@@ -377,8 +423,13 @@ const Dashboard: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
+      <PermissionsModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        serviceAccountEmail={serviceAccountEmail}
+      />
     </Container>
   );
 };
 
-export default withAuth(Dashboard);
+export default WithAuth(Dashboard);

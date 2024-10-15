@@ -1,13 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from '@/lib/authOptions';
 import { getWebsitesByUserId } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError } from '@/utils/errors';
 import { verifyWebsiteOwnership } from '@/lib/googleSearchConsole';
 import { Website } from '@/types';
 
-export const GET = withErrorHandling(async (request: NextRequest) => {
+export const GET = withErrorHandling(async () => {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user) {

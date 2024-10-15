@@ -1,7 +1,7 @@
 // Filename: components/IndexingStats.tsx
 
-import React, { useState, useEffect } from 'react';
-import { Grid, Typography, Paper, CircularProgress, Alert } from '@mui/material';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Grid, Typography, Paper, Alert } from '@mui/material';
 import { IndexingStatsData } from '@/types';
 
 interface IndexingStatsProps {
@@ -10,16 +10,10 @@ interface IndexingStatsProps {
 
 const IndexingStats: React.FC<IndexingStatsProps> = ({ websiteId }) => {
   const [indexingStats, setIndexingStats] = useState<IndexingStatsData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchIndexingStats();
-  }, [websiteId]);
-
-  const fetchIndexingStats = async () => {
+  const fetchIndexingStats = useCallback(async () => {
     try {
-      setLoading(true);
       setError(null);
 
       const response = await fetch(`/api/websites/${websiteId}/indexing-stats`);
@@ -33,11 +27,15 @@ const IndexingStats: React.FC<IndexingStatsProps> = ({ websiteId }) => {
     } catch (err) {
       console.error('Error fetching indexing stats:', err);
       setError('An error occurred while fetching indexing stats');
-    } finally {
-      setLoading(false);
     }
-  };
- 
+  }, [websiteId]);
+
+  
+  useEffect(() => {
+    fetchIndexingStats();
+  }, [fetchIndexingStats]);
+
+
   if (error) {
     return <Alert severity="error">{error}</Alert>;
   }

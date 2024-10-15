@@ -1,13 +1,11 @@
-import { Website, Page, IndexingStatus } from '@/types';
+import { Website, Page } from '@/types';
 import { 
-  getWebsitesForIndexing, 
   addOrUpdatePagesFromSitemap, 
   getPagesByWebsiteId,
   removePages,
   createIndexingJob,
   updateIndexingJob,
-  createIndexingJobDetail,
-  updateIndexingJobDetail
+  createIndexingJobDetail
 } from '@/models';
 import { fetchBulkIndexingStatus, submitUrlForIndexing } from './googleSearchConsole';
 import { fetchUrl, extractSitemapUrls, parseSitemap } from './sitemapProcessor';

@@ -32,6 +32,8 @@
   },
   "devDependencies": {
     "@types/jest": "^29.5.13",
+    "@types/next": "^9.0.0",
+    "@types/next-auth": "^3.15.0",
     "@types/node": "^20",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.11.10",

@@ -1,12 +1,14 @@
+// File: app/api/websites/[websiteId]/metrics/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from '@/lib/authOptions';
 import { getWebsiteById } from '@/models';
 import { getPageImpressionsAndClicks } from '@/lib/googleSearchConsole';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 
-export const GET = withErrorHandling(async (request: NextRequest) => {
+export const POST = withErrorHandling(async (request: NextRequest) => {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user) {
@@ -14,8 +16,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const websiteId = parseInt(request.nextUrl.pathname.split('/')[3]);
-  const urls = request.nextUrl.searchParams.get('urls')?.split(',') || [];
-
+  
   if (isNaN(websiteId)) {
     throw new ValidationError('Invalid website ID');
   }
@@ -26,9 +27,16 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  const analyticsData = await getPageImpressionsAndClicks(websiteId, urls);
+  const body = await request.json();
+  const { urls } = body;
+
+  if (!Array.isArray(urls)) {
+    throw new ValidationError('Invalid request body. Expected "urls" array.');
+  }
+
+  const metricsData = await getPageImpressionsAndClicks(websiteId, urls);
   return NextResponse.json({ 
-    data: analyticsData, 
-    message: Object.keys(analyticsData).length === 0 ? 'No data returned from Google Search Console' : 'Data retrieved successfully' 
+    data: metricsData, 
+    message: Object.keys(metricsData).length === 0 ? 'No data returned from Google Search Console' : 'Metrics retrieved successfully' 
   });
 });

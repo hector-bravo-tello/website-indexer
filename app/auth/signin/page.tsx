@@ -4,10 +4,8 @@ import { Box, Typography, Button, useMediaQuery, Theme } from '@mui/material';
 import Image from "next/image";
 import { signIn } from 'next-auth/react';
 import { Google as GoogleIcon } from '@mui/icons-material';
-import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const router = useRouter();
   const isMobile = useMediaQuery((theme: Theme) => theme.breakpoints.down('sm'));
 
   return (

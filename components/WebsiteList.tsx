@@ -48,15 +48,15 @@ const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, o
             <ListItemSecondaryAction>
               <Switch
                 edge="end"
-                onChange={() => handleToggle(website.id, website.indexing_enabled)}
-                checked={website.indexing_enabled}
+                onChange={() => handleToggle(website.id, website.auto_indexing_enabled)}
+                checked={website.auto_indexing_enabled}
               />
             </ListItemSecondaryAction>
           </ListItem>
         ))}
         {websites.length === 0 && (
           <Typography variant="body2" color="textSecondary" align="center">
-            No websites found. Click 'Refresh from Search Console' to fetch your properties.
+            No websites found. Click &quote;Refresh from Search Console&quote; to fetch your properties.
           </Typography>
         )}
       </List>

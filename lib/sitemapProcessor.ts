@@ -50,7 +50,7 @@ export async function processSingleWebsite(website: Website): Promise<void> {
 
     let totalPages = 0;
     for (const sitemapUrl of filteredSitemapUrls) {
-      const pageCount = await processSitemap(website.id, website.domain, sitemapUrl, website.user_id);
+      const pageCount = await processSitemap(website.id, sitemapUrl);
       totalPages += pageCount;
     }
 
@@ -94,7 +94,7 @@ function filterSitemaps(sitemapUrls: string[]): string[] {
   });
 }
 
-async function processSitemap(websiteId: number, domain: string, sitemapUrl: string, userId: number): Promise<number> {
+async function processSitemap(websiteId: number, sitemapUrl: string): Promise<number> {
   try {
     const sitemapContent = await fetchUrl(sitemapUrl);
     const pages = await parseSitemap(sitemapContent);

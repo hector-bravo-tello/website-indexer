@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from '@/lib/authOptions';
 import { getWebsiteById, updateWebsite } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
@@ -43,20 +43,16 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   let shouldRunJob: boolean = false;
 
   if (enabled) {
-    if (auto_indexing_enabled) {
-      message = 'Website enabled. Auto-indexing enabled.';
-      shouldRunJob = !website.last_robots_scan || new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000;
-    } else { 
-      message = 'Website enabled. Auto-indexing disabled.'; 
-    }
+    message = auto_indexing_enabled ? 'Website enabled. Auto-indexing enabled.' : 'Website enabled. Auto-indexing disabled.';
+    shouldRunJob = !website.last_robots_scan || new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000;
 
     if (shouldRunJob) {
       try {
         await jobQueue.addJob(websiteId, 'ui');
-        message = 'Auto-indexing enabled. Fetching data from Google Search Console...';
+        message = 'Fetching data from Google Search Console...';
 
       } catch (error) {
-        console.error(`Failed to start indexing job for website ${websiteId}:`, error);
+        console.error(`Failed to fetch data for website ${websiteId}:`, error);
       }
     }
   } else {  

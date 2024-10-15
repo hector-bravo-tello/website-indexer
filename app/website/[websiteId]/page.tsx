@@ -30,6 +30,7 @@ import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
 import IndexingStats from '@/components/IndexingStats';
 
+type SortableColumn = keyof Page | "impressions" | "clicks";
 type Order = 'asc' | 'desc';
 
 interface HeadCell {
@@ -65,10 +66,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order>('asc');
-  const [orderBy, setOrderBy] = useState<keyof Page | 'impressions' | 'clicks'>('indexing_status');
+  const [orderBy, setOrderBy] = useState<SortableColumn>('indexing_status');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
-  const [analyticsData, setAnalyticsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});
+  const [metricsData, setmetricsData] = useState<{ [key: string]: { impressions: number, clicks: number } }>({});
   const [submitting, setSubmitting] = useState<number | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false,
@@ -86,6 +87,20 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
   const cleanDomain = (domain: string): string => {
     return domain.replace(/^(sc-domain:)?(https?:\/\/)?(www\.)?/, '');
+  };
+
+  const formatLastCrawled = (date: Date | null): string => {
+    return date ? new Date(date).toLocaleString() : 'Not crawled yet';
+  };
+
+  const isSortableColumn = (id: string): id is SortableColumn => {
+    return id !== 'actions';
+  };
+
+  const canSubmitForIndexing = (lastIndexedDate: Date | null): boolean => {
+    if (!lastIndexedDate) return true; // If never indexed, allow submission
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    return new Date(lastIndexedDate).getTime() <= twentyFourHoursAgo;
   };
 
   const fetchWebsiteDetails = useCallback(async () => {
@@ -108,30 +123,35 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       setAllPages(pagesData.pages || []);
 
       const urls = pagesData.pages.map((p: Page) => p.url);
-      const analyticsResponse = await fetch(`/api/websites/${websiteId}/analytics?urls=${urls.join(',')}`);
-      if (!analyticsResponse.ok) {
-        throw new Error('Failed to fetch analytics data');
+      const metricsResponse = await fetch(`/api/websites/${websiteId}/metrics`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ urls }),
+      });
+      if (!metricsResponse.ok) {
+        throw new Error('Failed to fetch metrics data');
       }
-      const analyticsData = await analyticsResponse.json();
-      setAnalyticsData(analyticsData.data);
+      const metricsData = await metricsResponse.json();
+      setmetricsData(metricsData.data);
 
     } catch (err) {
       console.error('Error fetching website details:', err);
       setError('An error occurred while fetching website details');
       setGlobalError('Failed to load website details. Please try again later.');
+
     } finally {
       setLoading(false);
     }
   }, [websiteId, setGlobalError]);
 
-  useEffect(() => {
-    fetchWebsiteDetails();
-  }, [fetchWebsiteDetails]);
-
-  const handleRequestSort = (property: keyof Page | 'impressions' | 'clicks') => {
-    const isAsc = orderBy === property && order === 'asc';
-    setOrder(isAsc ? 'desc' : 'asc');
-    setOrderBy(property);
+  const handleRequestSort = (property: keyof Page | "impressions" | "clicks" | "actions") => {
+    if (isSortableColumn(property)) {
+      const isAsc = orderBy === property && order === 'asc';
+      setOrder(isAsc ? 'desc' : 'asc');
+      setOrderBy(property);
+    }
   };
 
   const handleChangePage = (event: unknown, newPage: number) => {
@@ -164,6 +184,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
 
       // Refresh the page data
       fetchWebsiteDetails();
+
     } catch (err) {
       console.error('Error submitting page for indexing:', err);
       setGlobalError('Failed to submit page for indexing. Please try again later.');
@@ -172,6 +193,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         message: 'Failed to submit page for indexing',
         severity: 'error',
       });
+
     } finally {
       setSubmitting(null);
     }
@@ -181,17 +203,22 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     try {
       setSyncing(true);
       setPollingAttempts(0);
-      const response = await fetch(`/api/websites/${websiteId}/toggle-indexing`, {
+
+      const response = await fetch(`/api/websites/${websiteId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ enabled: true }),
       });
+
       if (!response.ok) {
         throw new Error('Failed to sync pages');
       }
+
       const data = await response.json();
+      console.log(data);
+
       setInitialScanTime(data.initialScanTime);
       setIsPolling(true);
       setSnackbar({
@@ -199,6 +226,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         message: 'Sync pages started',
         severity: 'success',
       });
+
     } catch (err) {
       console.error('Error syncing pages:', err);
       setGlobalError('Failed to sync pages. Please try again later.');
@@ -207,6 +235,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         message: 'Failed to sync pages',
         severity: 'error',
       });
+
     } finally {
       setSyncing(false);
     }
@@ -216,7 +245,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     if (!initialScanTime) return;
   
     try {
-      const response = await fetch(`/api/websites/${websiteId}/toggle-indexing?initialScanTime=${initialScanTime}`);
+      const response = await fetch(`/api/websites/${websiteId}/toggle?initialScanTime=${initialScanTime}`);
       if (!response.ok) {
         throw new Error('Failed to check sync status');
       }
@@ -246,8 +275,11 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       });
     }
   }, [initialScanTime, websiteId, fetchWebsiteDetails, pollingAttempts]);
-  
-  // Modify the useEffect hook for polling:
+
+  useEffect(() => {
+    fetchWebsiteDetails();
+  }, [fetchWebsiteDetails]);
+
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
   
@@ -264,6 +296,11 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     };
   }, [isPolling, checkJobStatus, pollingAttempts]);
 
+  useEffect(() => {
+    if (!isPolling) {
+      fetchWebsiteDetails();
+    }
+  }, [isPolling, fetchWebsiteDetails]);
 
   const getSubmitButtonColor = (status: string) => {
     return status !== indexed ? theme.palette.error.light : theme.palette.primary.main;
@@ -272,10 +309,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const sortedAndPaginatedPages = useMemo(() => {
     const sortedPages = [...allPages].sort((a, b) => {
       const aValue = orderBy === 'impressions' || orderBy === 'clicks' 
-        ? (analyticsData[a.url]?.[orderBy] || 0) 
+        ? (metricsData[a.url]?.[orderBy] || 0) 
         : a[orderBy as keyof Page];
       const bValue = orderBy === 'impressions' || orderBy === 'clicks'
-        ? (analyticsData[b.url]?.[orderBy] || 0)
+        ? (metricsData[b.url]?.[orderBy] || 0)
         : b[orderBy as keyof Page];
 
       if (typeof aValue === 'string' && typeof bValue === 'string') {
@@ -291,7 +328,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     const startIndex = page * rowsPerPage;
     const endIndex = startIndex + rowsPerPage;
     return sortedPages.slice(startIndex, endIndex);
-  }, [allPages, order, orderBy, analyticsData, page, rowsPerPage]);
+  }, [allPages, order, orderBy, metricsData, page, rowsPerPage]);
 
   if (loading && allPages.length === 0) {
     return (
@@ -347,13 +384,13 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                     </Typography>
                     <Typography variant="body2">Status: {page.indexing_status}</Typography>
                     <Typography variant="body2">
-                      Last Crawled: {new Date(page.last_indexed_date).toLocaleString()}
+                      Last Crawled: {formatLastCrawled(page.last_indexed_date)}
                     </Typography>
                     <Typography variant="body2">
-                      Impressions: {analyticsData[page.url]?.impressions || 0}
+                      Impressions: {metricsData[page.url]?.impressions || 0}
                     </Typography>
                     <Typography variant="body2">
-                      Clicks: {analyticsData[page.url]?.clicks || 0}
+                      Clicks: {metricsData[page.url]?.clicks || 0}
                     </Typography>
                     <Button
                       variant="contained"
@@ -361,7 +398,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       onClick={() => handleSubmitForIndexing(page.id)}
                       disabled={
                         submitting === page.id ||
-                        new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000
+                        !canSubmitForIndexing(page.last_indexed_date)
                       }
                       sx={{ 
                         mt: 1, 
@@ -420,9 +457,9 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                         {page.url}
                       </TableCell>
                       <TableCell>{page.indexing_status}</TableCell>
-                      <TableCell>{new Date(page.last_indexed_date).toLocaleString()}</TableCell>
-                      <TableCell align="right">{analyticsData[page.url]?.impressions || 0}</TableCell>
-                      <TableCell align="right">{analyticsData[page.url]?.clicks || 0}</TableCell>
+                      <TableCell>{formatLastCrawled(page.last_indexed_date)}</TableCell>
+                      <TableCell align="right">{metricsData[page.url]?.impressions || 0}</TableCell>
+                      <TableCell align="right">{metricsData[page.url]?.clicks || 0}</TableCell>
                       <TableCell>
                         <Button
                           variant="contained"
@@ -430,7 +467,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                           onClick={() => handleSubmitForIndexing(page.id)}
                           disabled={
                             submitting === page.id ||
-                            new Date(page.last_indexed_date).getTime() > Date.now() - 24 * 60 * 60 * 1000
+                            !canSubmitForIndexing(page.last_indexed_date)
                           }
                           sx={{ 
                             backgroundColor: getSubmitButtonColor(page.indexing_status),

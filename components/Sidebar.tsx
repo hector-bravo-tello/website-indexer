@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton, CircularProgress, useTheme, useMediaQuery } from '@mui/material';
+import { Box, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, IconButton, CircularProgress, useTheme, useMediaQuery } from '@mui/material';
 import { Dashboard as DashboardIcon, Web as WebIcon, Close as CloseIcon } from '@mui/icons-material';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -32,7 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         throw new Error('Failed to fetch websites');
       }
       const data = await response.json();
-      setWebsites(data.filter((website: Website) => website.indexing_enabled));
+      setWebsites(data.filter((website: Website) => website.enabled));
     } catch (error) {
       console.error('Error fetching websites:', error);
     } finally {
@@ -86,11 +86,13 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
 
       <List>
         <Link href="/dashboard" passHref legacyBehavior>
-          <ListItem sx={{ cursor: 'pointer' }} button="true">
-            <ListItemIcon>
-              <DashboardIcon />
-            </ListItemIcon>
-            <ListItemText primary="Dashboard" />
+          <ListItem component="a" disablePadding>
+            <ListItemButton>
+              <ListItemIcon>
+                <DashboardIcon />
+              </ListItemIcon>
+              <ListItemText primary="Dashboard" sx={{ color: 'primary.main' }} />
+            </ListItemButton>
           </ListItem>
         </Link>
       </List>
@@ -106,11 +108,13 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose, sidebarWidth, onSideba
         ) : websites.length > 0 ? (
           websites.map((website) => (
             <Link href={`/website/${website.id}`} passHref key={website.id} legacyBehavior>
-              <ListItem sx={{ cursor: 'pointer' }} button="true">
-                <ListItemIcon>
-                  <WebIcon />
-                </ListItemIcon>
-                <ListItemText primary={extractDomainName(website.domain)} />
+              <ListItem component="a" disablePadding>
+                <ListItemButton>
+                  <ListItemIcon>
+                    <WebIcon />
+                  </ListItemIcon>
+                  <ListItemText primary={extractDomainName(website.domain)} sx={{ color: 'primary.main' }} />
+                </ListItemButton>
               </ListItem>
             </Link>
           ))

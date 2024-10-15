@@ -1,7 +1,7 @@
 // File: app/api/websites/[websiteId]/verify-ownership/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from '@/lib/authOptions';
 import { getWebsiteById } from '@/models';
 import { verifyWebsiteOwnership } from '@/lib/googleSearchConsole';
 import { withErrorHandling } from '@/utils/apiUtils';

@@ -1,5 +1,5 @@
 // File: components/ErrorBoundary.tsx
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo } from 'react';
 import { AppError } from '@/utils/errors';
 
 interface Props {
