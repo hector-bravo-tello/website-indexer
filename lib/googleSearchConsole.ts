@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 import { JWT } from 'google-auth-library';
 import { IndexingStatus } from '@/types';
-import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite, updatePageData } from '@/models';
+import { getWebsitesByUserId, getWebsiteById, createWebsite, updateWebsite } from '@/models';
 import CONFIG from '@/config';
 
 const auth = new JWT({
@@ -34,7 +34,7 @@ export async function fetchAndStoreWebsites(userId: number): Promise<void> {
   
       if (sites.data.siteEntry) {
         for (const site of sites.data.siteEntry) {
-          const domain = site.siteUrl || ''; // Provide a default empty string if siteUrl is null or undefined
+          const domain = site.siteUrl || '';
           const existingWebsite = existingWebsites.find(w => w.domain === domain);
   
           if (existingWebsite) {
@@ -42,7 +42,7 @@ export async function fetchAndStoreWebsites(userId: number): Promise<void> {
               enabled: existingWebsite.enabled,
               auto_indexing_enabled: existingWebsite.auto_indexing_enabled,
             });
-          } else if (domain) { // Only create a new website if domain is not an empty string
+          } else if (domain) { 
             await createWebsite({
               user_id: userId,
               domain: domain,
@@ -99,9 +99,11 @@ export async function fetchBulkIndexingStatus(websiteId: number, urls: string[])
     }
   }, 100);
 
+  /*
   for (const result of results) {
     await updatePageData(websiteId, result.url, result.indexingStatus, result.lastIndexedDate);
   }
+  */
 
   return results;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { 
   Container, 
@@ -21,7 +21,12 @@ import {
   Switch,
   IconButton,
   Tooltip,
-  Chip
+  Chip,
+  useTheme,
+  useMediaQuery,
+  Grid,
+  Card,
+  CardContent
 } from '@mui/material';
 import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { Refresh as RefreshIcon, Info as InfoIcon } from '@mui/icons-material';
@@ -29,13 +34,9 @@ import { WithAuth } from '@/components/WithAuth';
 import { PermissionsModal } from '@/components/PermissionsModal';
 import { Website } from '@/types';
 import { useError } from '@/lib/useError';
-import CONFIG from '@/config';
-
-console.log("Client email:", CONFIG.google.clientEmail);
 
 const Dashboard: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
-  const [currentWebsiteId, setCurrentWebsiteId] = useState<number | null>(null);
   const [websites, setWebsites] = useState<Website[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -49,6 +50,8 @@ const Dashboard: React.FC = () => {
   });
   const [serviceAccountEmail, setServiceAccountEmail] = useState('');
   const setError = useError();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
     props,
@@ -65,7 +68,6 @@ const Dashboard: React.FC = () => {
       }
       const data = await response.json();
       setServiceAccountEmail(data.email);
-
     } catch (error) {
       console.error('Error fetching service account email:', error);
       setError('Failed to load service account email. Please try again later.');
@@ -88,7 +90,6 @@ const Dashboard: React.FC = () => {
       setLoading(false);
     }
   }, [setError]);
-
 
   useEffect(() => {
     fetchWebsites();
@@ -163,20 +164,13 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleRecheckPermissions = async () => {
-    if (currentWebsiteId) {
-      await handleVerifyOwnershipPermissions(currentWebsiteId);
-      setModalOpen(false);
-    }
-  };
-
   const handleVerifyOwnershipPermissions = async (websiteId: number) => {
     try {
       const response = await fetch(`/api/websites/${websiteId}/verify-ownership`, {
         method: 'GET',
       });
       if (!response.ok) {
-        throw new Error('Failed to verify ownsership permissions');
+        throw new Error('Failed to verify ownership permissions');
       }
       const data = await response.json();
       setWebsites(prevWebsites => 
@@ -254,41 +248,47 @@ const Dashboard: React.FC = () => {
     return new Date(date).toLocaleString();
   };
 
-  const sortedWebsites = websites?.slice().sort((a, b) => {
-    let valueA: any = a[orderBy];
-    let valueB: any = b[orderBy];
-    
-    if (orderBy === 'domain') {
-      valueA = extractDomain(valueA as string);
-      valueB = extractDomain(valueB as string);
-    } else if (orderBy === 'last_robots_scan') {
-      valueA = valueA ? new Date(valueA as Date).getTime() : 0;
-      valueB = valueB ? new Date(valueB as Date).getTime() : 0;
-    }
-    
-    if (valueA < valueB) {
-      return order === 'asc' ? -1 : 1;
-    }
-    if (valueA > valueB) {
-      return order === 'asc' ? 1 : -1;
-    }
-    return 0;
-  });
+  const sortedWebsites = useMemo(() => {
+    if (!websites) return [];
+    return [...websites].sort((a, b) => {
+      let valueA: any = a[orderBy];
+      let valueB: any = b[orderBy];
+      
+      if (orderBy === 'domain') {
+        valueA = extractDomain(valueA as string);
+        valueB = extractDomain(valueB as string);
+      } else if (orderBy === 'last_robots_scan') {
+        valueA = valueA ? new Date(valueA as Date).getTime() : 0;
+        valueB = valueB ? new Date(valueB as Date).getTime() : 0;
+      }
+      
+      if (valueA < valueB) {
+        return order === 'asc' ? -1 : 1;
+      }
+      if (valueA > valueB) {
+        return order === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  }, [websites, order, orderBy]);
+
+  const paginatedWebsites = useMemo(() => {
+    const startIndex = page * rowsPerPage;
+    return sortedWebsites.slice(startIndex, startIndex + rowsPerPage);
+  }, [sortedWebsites, page, rowsPerPage]);
 
   const renderOwnershipChip = (isOwner: boolean | null) => {
     if (isOwner === null) {
-      <Chip label="Not Owner" color="default" variant="outlined" />
+      return <Chip label="Unknown" color="default" variant="outlined" />;
     }
     return isOwner ? (
       <Chip label="Owner" color="success" variant="outlined" />
     ) : (
-      <Chip label="Not Owner" color="default" variant="outlined" />
+      <Chip label="Not Owner" color="warning" variant="outlined" />
     );
   };
 
-  const paginatedWebsites = sortedWebsites?.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
-
-  if (loading) {
+  if (loading && !websites) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
         <CircularProgress />
@@ -298,19 +298,21 @@ const Dashboard: React.FC = () => {
 
   return (
     <Container sx={{ mt: 4 }}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h4" component="h1">
-          Dashboard
-        </Typography>
-        <Box>
+      <Grid container spacing={3} alignItems="center" sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6}>
+          <Typography variant="h4" component="h1" sx={{ fontSize: { xs: '1.5rem', sm: '2rem' } }}>
+            Dashboard
+          </Typography>
+        </Grid>
+        <Grid item xs={12} sm={6} sx={{ display: 'flex', justifyContent: { xs: 'flex-start', sm: 'flex-end' }, flexDirection: { xs: 'column', sm: 'row' } }}>
           <Button
             startIcon={<InfoIcon />}
             onClick={() => setModalOpen(true)}
             variant="outlined"
             color="secondary"
-            sx={{ mr: 2 }}
+            sx={{ mr: { xs: 0, sm: 2 }, mb: { xs: 1, sm: 0 } }}
           >
-            Grant Ownership Permissions
+            How to Enable Auto-indexing
           </Button>
           <Button
             startIcon={<RefreshIcon />}
@@ -319,96 +321,142 @@ const Dashboard: React.FC = () => {
           >
             Refresh from Google Search Console
           </Button>
-        </Box>
-      </Box>
+        </Grid>
+      </Grid>
+
       {websites && (
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'domain'}
-                    direction={orderBy === 'domain' ? order : 'asc'}
-                    onClick={() => handleRequestSort('domain')}
-                  >
-                    Website
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell>Enabled</TableCell>
-                <TableCell>Permissions</TableCell>
-                <TableCell>Auto-indexing</TableCell>
-                <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'last_robots_scan'}
-                    direction={orderBy === 'last_robots_scan' ? order : 'asc'}
-                    onClick={() => handleRequestSort('last_robots_scan')}
-                  >
-                    Last Scanned
-                  </TableSortLabel>
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {paginatedWebsites?.map((website) => (
-                <TableRow key={website.id}>
-                  <TableCell>
-                    {website.enabled ? (
-                    <Link href={`/website/${website.id}`} passHref>
-                      <Typography 
-                        component="a" 
-                        sx={{ 
-                          color: 'primary.main', 
-                          textDecoration: 'none',
-                          '&:hover': {
-                            textDecoration: 'underline',
-                          },
-                        }}
-                      >
-                        {extractDomain(website.domain)}
-                      </Typography>
-                    </Link>
-                    ) : (
-                       extractDomain(website.domain)
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={website.enabled}
-                      onChange={() => handleToggleEnabled(website.id, website.enabled)}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    {renderOwnershipChip(website.is_owner)}
-                    <Tooltip title="Refresh Permissions">
-                      <IconButton onClick={() => handleVerifyOwnershipPermissions(website.id)} size="small">
-                        <RefreshIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={website.auto_indexing_enabled}
-                      onChange={() => handleToggleAutoIndexing(website.id, website.auto_indexing_enabled)}
-                      disabled={!website.is_owner}
-                    />
-                  </TableCell>
-                  <TableCell>{formatLastScanned(website.last_robots_scan)}</TableCell>
-                </TableRow>
+        <>
+          {isMobile ? (
+            // Mobile view
+            <Box>
+              {paginatedWebsites.map((website) => (
+                <Card key={website.id} sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ mb: 1, wordBreak: 'break-all' }}>
+                      {extractDomain(website.domain)}
+                    </Typography>
+                    <Typography variant="body2">
+                      Enabled: 
+                      <Switch
+                        checked={website.enabled}
+                        onChange={() => handleToggleEnabled(website.id, website.enabled)}
+                      />
+                    </Typography>
+                    <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                      Permissions:&nbsp; {renderOwnershipChip(website.is_owner)}
+                      <Tooltip title="Refresh Permissions">
+                        <IconButton onClick={() => handleVerifyOwnershipPermissions(website.id)} size="small">
+                          <RefreshIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Typography>
+                    <Typography variant="body2">
+                      Auto-indexing: 
+                      <Switch
+                        checked={website.auto_indexing_enabled}
+                        onChange={() => handleToggleAutoIndexing(website.id, website.auto_indexing_enabled)}
+                        disabled={!website.is_owner}
+                      />
+                    </Typography>
+                    <Typography variant="body2">
+                      Last Scanned: {formatLastScanned(website.last_robots_scan)}
+                    </Typography>
+                  </CardContent>
+                </Card>
               ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+            </Box>
+          ) : (
+            // Desktop view
+            <TableContainer component={Paper}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>
+                      <TableSortLabel
+                        active={orderBy === 'domain'}
+                        direction={orderBy === 'domain' ? order : 'asc'}
+                        onClick={() => handleRequestSort('domain')}
+                      >
+                        Website
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell>Enabled</TableCell>
+                    <TableCell>Permissions</TableCell>
+                    <TableCell>Auto-indexing</TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={orderBy === 'last_robots_scan'}
+                        direction={orderBy === 'last_robots_scan' ? order : 'asc'}
+                        onClick={() => handleRequestSort('last_robots_scan')}
+                      >
+                        Last Scanned
+                      </TableSortLabel>
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {paginatedWebsites.map((website) => (
+                    <TableRow key={website.id}>
+                      <TableCell>
+                        {website.enabled ? (
+                          <Link href={`/website/${website.id}`} passHref>
+                            <Typography 
+                              component="a" 
+                              sx={{ 
+                                color: 'primary.main', 
+                                textDecoration: 'none',
+                                '&:hover': {
+                                  textDecoration: 'underline',
+                                },
+                              }}
+                            >
+                              {extractDomain(website.domain)}
+                            </Typography>
+                          </Link>
+                        ) : (
+                          extractDomain(website.domain)
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={website.enabled}
+                          onChange={() => handleToggleEnabled(website.id, website.enabled)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {renderOwnershipChip(website.is_owner)}
+                        <Tooltip title="Refresh Permissions">
+                          <IconButton onClick={() => handleVerifyOwnershipPermissions(website.id)} size="small">
+                            <RefreshIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={website.auto_indexing_enabled}
+                          onChange={() => handleToggleAutoIndexing(website.id, website.auto_indexing_enabled)}
+                          disabled={!website.is_owner}
+                        />
+                      </TableCell>
+                      <TableCell>{formatLastScanned(website.last_robots_scan)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+          <TablePagination
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            component="div"
+            count={sortedWebsites.length}
+            rowsPerPage={rowsPerPage}
+            page={page}
+            onPageChange={handleChangePage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+          />
+        </>
       )}
-      <TablePagination
-        rowsPerPageOptions={[10, 25, 50]}
-        component="div"
-        count={websites?.length || 0}
-        rowsPerPage={rowsPerPage}
-        page={page}
-        onPageChange={handleChangePage}
-        onRowsPerPageChange={handleChangeRowsPerPage}
-      />
+
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}

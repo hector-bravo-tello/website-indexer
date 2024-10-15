@@ -8,8 +8,10 @@ import {
   createIndexingJobDetail
 } from '@/models';
 import { fetchBulkIndexingStatus, submitUrlForIndexing } from './googleSearchConsole';
-import { fetchUrl, extractSitemapUrls, parseSitemap } from './sitemapProcessor';
+import { fetchUrl, extractSitemapUrls, parseSitemap, filterSitemaps } from './sitemapProcessor';
+import { promisify } from 'util';
 
+const delay = promisify(setTimeout);
 const indexed: string = 'Submitted and indexed';
 
 export async function processWebsiteForScheduledJob(website: Website): Promise<void> {
@@ -18,49 +20,66 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
 
     const robotsTxtUrl = `https://${website.domain}/robots.txt`;
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
-    const sitemapUrls = extractSitemapUrls(robotsTxtContent);
+    const allSitemapUrls = extractSitemapUrls(robotsTxtContent);
+    const filteredSitemapUrls = filterSitemaps(allSitemapUrls);
 
+    // get all pages from sitemaps
     let allPages: Pick<Page, 'url'>[] = [];
-    for (const sitemapUrl of sitemapUrls) {
+    for (const sitemapUrl of filteredSitemapUrls) {
       const sitemapContent = await fetchUrl(sitemapUrl);
       const pages = await parseSitemap(sitemapContent);
       allPages = allPages.concat(pages);
     }
 
     const { pages: existingPages } = await getPagesByWebsiteId(website.id, true);
-    const existingUrls = new Set(existingPages.map(page => page.url));
-    const currentUrls = new Set(allPages.map(page => page.url));
+    const existingUrls = new Set(existingPages.map(page => page.url));  // from database
+    const currentUrls = new Set(allPages.map(page => page.url));        // from sitemap
 
     const newUrls = allPages.filter(page => !existingUrls.has(page.url));
     const removedUrls = existingPages.filter(page => !currentUrls.has(page.url));
     const unchangedUrls = allPages.filter(page => existingUrls.has(page.url));
 
+    // get indexing data before submitting non-indexed pages
     const urlsToCheck = [...newUrls, ...unchangedUrls].map(page => page.url);
-    const indexingStatuses = await fetchBulkIndexingStatus(website.id, urlsToCheck);
+    let indexedPages = await fetchBulkIndexingStatus(website.id, urlsToCheck);
 
-    const pagesToUpdate = indexingStatuses.map(status => ({
-      url: status.url,
-      indexingStatus: status.indexingStatus,
-      lastIndexedDate: status.lastIndexedDate
-    }));
-
-    await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
-
-    for (const page of pagesToUpdate) {
+    // Submit non-indexed pages
+    for (const page of indexedPages) {
       if (page.indexingStatus !== indexed) {
-        await submitUrlForIndexing(website.domain, page.url);
-        await createIndexingJobDetail({
-          indexing_job_id: job.job.id,
-          page_id: existingPages.find(p => p.url === page.url)?.id || 0,
-          status: 'Submitted'
-        });
+        try {
+          await submitUrlForIndexing(website.domain, page.url);
+          await createIndexingJobDetail({
+            indexing_job_id: job.job.id,
+            page_id: existingPages.find(p => p.url === page.url)?.id || 0,
+            status: 'Submitted'
+          });
+        } catch (error) {
+          console.error(`Error submitting URL for indexing: ${page.url}`, error);
+        }
       }
     }
 
+    // Wait for Google to process submissions
+    await delay(20000); // Wait for 20 seconds
+
+    // Fetch updated indexing statuses
+    indexedPages = await fetchBulkIndexingStatus(website.id, urlsToCheck);
+
+    const pagesToUpdate = indexedPages.map(page => ({
+      url: page.url,
+      indexingStatus: page.indexingStatus,
+      lastIndexedDate: page.lastIndexedDate
+    }));
+
+    // Update database with final indexing data
+    await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
+
+    // remove pages in database because were removed in sitemap
     if (removedUrls.length > 0) {
       await removePages(website.id, removedUrls.map(page => page.id));
     }
 
+    // update the the Indexing Job completion
     await updateIndexingJob(job.job.id, { 
       status: 'completed', 
       processed_pages: pagesToUpdate.length 

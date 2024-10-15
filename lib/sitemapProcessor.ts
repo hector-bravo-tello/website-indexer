@@ -62,7 +62,7 @@ export async function processSingleWebsite(website: Website): Promise<void> {
 }
 
 // Function to filter sitemaps based on their names
-function filterSitemaps(sitemapUrls: string[]): string[] {
+export function filterSitemaps(sitemapUrls: string[]): string[] {
   const includePatterns = [
     /post-sitemap/,
     /page-sitemap/,

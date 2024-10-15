@@ -10,7 +10,9 @@ import {
   Box, 
   IconButton, 
   Tooltip,
-  Snackbar
+  Snackbar,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import { Launch as LaunchIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import MuiAlert, { AlertProps } from '@mui/material/Alert';
@@ -27,6 +29,8 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   serviceAccountEmail
 }) => {
   const [copySuccess, setCopySuccess] = useState(false);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const handleCopyEmail = async () => {
     try {
@@ -52,8 +56,16 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   });
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Permissions needed for Auto-Indexing</DialogTitle>
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="sm" 
+      fullWidth
+      fullScreen={isMobile}
+    >
+      <DialogTitle sx={{ fontSize: { xs: '1.2rem', sm: '1.5rem' } }}>
+        Permissions needed for Auto-Indexing
+      </DialogTitle>
       <DialogContent>
         <Typography paragraph>
           To activate the service account, please add the following email to your Google Search Console users:
@@ -64,10 +76,19 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
           bgcolor: 'grey.100', 
           borderRadius: 1, 
           display: 'flex', 
-          alignItems: 'center', 
+          flexDirection: { xs: 'column', sm: 'row' },
+          alignItems: { xs: 'flex-start', sm: 'center' }, 
           justifyContent: 'space-between'
         }}>
-          <Typography variant="body2" sx={{ fontWeight: 'bold', wordBreak: 'break-all', mr: 2 }}>
+          <Typography 
+            variant="body2" 
+            sx={{ 
+              fontWeight: 'bold', 
+              wordBreak: 'break-all', 
+              mr: { xs: 0, sm: 2 },
+              mb: { xs: 1, sm: 0 }
+            }}
+          >
             {serviceAccountEmail || 'Service account email not available'}
           </Typography>
           <Tooltip title="Copy email">
@@ -93,11 +114,18 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
           Open Google Search Console
         </Button>
         <Typography variant="body2" color="text.secondary">
-            After adding the service account, click the &quot;Refresh Permissions&quot; button to verify it.
+          After adding the service account, click the &quot;Refresh Permissions&quot; button to verify it.
         </Typography>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+      <DialogActions sx={{ flexDirection: { xs: 'column', sm: 'row' }, padding: { xs: 2, sm: 1 } }}>
+        <Button 
+          onClick={onClose} 
+          variant="contained"
+          fullWidth={isMobile}
+          sx={{ mb: { xs: 1, sm: 0 } }}
+        >
+          Close
+        </Button>
       </DialogActions>
       <Snackbar open={copySuccess} autoHideDuration={3000} onClose={handleCloseCopySuccess}>
         <Alert onClose={handleCloseCopySuccess} severity="success" sx={{ width: '100%' }}>
