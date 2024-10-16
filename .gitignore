@@ -27,6 +27,7 @@ yarn-error.log*
 
 #log
 *.log
+all-code.txt
 
 # vercel
 .vercel
