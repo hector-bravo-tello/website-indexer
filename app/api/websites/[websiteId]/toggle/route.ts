@@ -44,7 +44,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   if (enabled) {
     message = auto_indexing_enabled ? 'Website enabled. Auto-indexing enabled.' : 'Website enabled. Auto-indexing disabled.';
-    shouldRunJob = !website.last_robots_scan || new Date(website.last_robots_scan).getTime() < Date.now() - 24 * 60 * 60 * 1000;
+    shouldRunJob = !website.last_robots_scan || new Date(website.last_robots_scan).getTime() < Date.now() - 1 * 60 * 60 * 1000;
 
     if (shouldRunJob) {
       try {

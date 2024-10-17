@@ -245,8 +245,7 @@ const Dashboard: React.FC = () => {
   };
 
   const formatLastScanned = (date: Date | null): string => {
-    if (!date) return 'Never';
-    return new Date(formatDateToLocal(date)).toLocaleString();
+    return date ? formatDateToLocal(date) : 'Never';
   };
 
   const sortedWebsites = useMemo(() => {

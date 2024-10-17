@@ -100,11 +100,11 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   }
 
   const formatLastCrawled = (date: Date | null): string => {
-    return date ? new Date(formatDateToLocal(date)).toLocaleString() : 'Not crawled yet';
+    return date ? formatDateToLocal(date) : 'Not crawled yet';
   };
 
   const formatLastSubmitted = (date: Date | null): string => {
-    return date ? new Date(formatDateToLocal(date)).toLocaleString() : '';
+    return date ? formatDateToLocal(date) : '';
   };
 
   const isSortableColumn = (id: string): id is SortableColumn => {
