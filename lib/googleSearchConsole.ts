@@ -68,7 +68,7 @@ export async function fetchAndStoreWebsites(userId: number): Promise<void> {
     }
 }
 
-export async function fetchBulkIndexingStatus(websiteId: number, urls: string[]): Promise<Array<{ url: string, lastIndexedDate: string | null, indexingStatus: IndexingStatus }>> {
+export async function fetchBulkIndexingStatus(websiteId: number, urls: string[]): Promise<Array<{ url: string, lastCrawledDate: string | null, indexingStatus: IndexingStatus }>> {
   const { website } = await getWebsiteById(websiteId);
   if (!website) {
     throw new Error('Website not found');
@@ -86,14 +86,14 @@ export async function fetchBulkIndexingStatus(websiteId: number, urls: string[])
       const result = response.data.inspectionResult;
       return {
         url: url,
-        lastIndexedDate: result?.indexStatusResult?.lastCrawlTime || null,
+        lastCrawledDate: result?.indexStatusResult?.lastCrawlTime || null,
         indexingStatus: result?.indexStatusResult?.coverageState as IndexingStatus
       };
     } catch (error) {
       console.error(`Error inspecting URL ${url}:`, error);
       return {
         url: url,
-        lastIndexedDate: null,
+        lastCrawledDate: null,
         indexingStatus: 'error' as IndexingStatus
       };
     }
@@ -119,7 +119,7 @@ export async function submitUrlForIndexing(domain: string, url: string): Promise
         },
       });
       console.log(`Submitted URL for indexing: ${url}`);
-      return response;
+      return response.data;
 
     } catch (error) {
       console.error(`Error submitting URL for indexing: ${url}`, error);

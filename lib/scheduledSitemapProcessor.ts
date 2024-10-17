@@ -17,8 +17,6 @@ const indexed: string = 'Submitted and indexed';
 
 export async function processWebsiteForScheduledJob(website: Website): Promise<void> {
   try {
-    const job = await createIndexingJob({ website_id: website.id, status: 'in_progress', total_pages: 0 });
-
     const cleanedDomain = cleanDomain(website.domain);
     const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
     const robotsTxtContent = await fetchUrl(robotsTxtUrl);
@@ -32,6 +30,9 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
       const pages = await parseSitemap(sitemapContent);
       allPages = allPages.concat(pages);
     }
+
+    // create indexing job in database when starting
+    const job = await createIndexingJob({ website_id: website.id, status: 'in_progress', total_pages: allPages.length });
 
     // get websites pages from database
     const { pages: existingPages } = await getPagesByWebsiteId(website.id, true);
@@ -50,15 +51,19 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     let indexedPages = await fetchBulkIndexingStatus(website.id, urlsToCheck);
 
     // Submit non-indexed pages
+    let processedPages = 0;
+    const current_time = Date.now();
     for (const page of indexedPages) {
       if (page.indexingStatus !== indexed) {
         try {
-          await submitUrlForIndexing(website.domain, page.url);
+          const response = await submitUrlForIndexing(website.domain, page.url);
           await createIndexingJobDetail({
             indexing_job_id: job.job.id,
             page_id: existingPages.find(p => p.url === page.url)?.id || 0,
-            status: 'Submitted'
+            status: 'Submitted',
+            response: JSON.stringify(response)
           });
+          processedPages++;
         } catch (error) {
           console.error(`Error submitting URL for indexing: ${page.url}`, error);
         }
@@ -74,7 +79,8 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     const pagesToUpdate = indexedPages.map(page => ({
       url: page.url,
       indexingStatus: page.indexingStatus,
-      lastIndexedDate: page.lastIndexedDate
+      lastCrawledDate: page.lastCrawledDate,
+      lastSubmittedDate: current_time.toString()
     }));
 
     // Update database with final indexing data
@@ -91,7 +97,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     // update the the Indexing Job completion
     await updateIndexingJob(job.job.id, { 
       status: 'completed', 
-      processed_pages: pagesToUpdate.length 
+      processed_pages: processedPages 
     });
 
   } catch (error) {

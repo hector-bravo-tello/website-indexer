@@ -32,7 +32,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   // Check if 24 hours have passed since the last submission
-  const lastSubmissionDate = new Date(page.last_indexed_date as Date);
+  const lastSubmissionDate = new Date(page.last_submitted_date as Date);
   const currentDate = new Date();
   const hoursSinceLastSubmission = (currentDate.getTime() - lastSubmissionDate.getTime()) / (1000 * 60 * 60);
 
@@ -44,7 +44,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   await submitUrlForIndexing(website.domain, page.url);
 
   // Update the page's last indexed date
-  await updatePageData(websiteId, page.url, 'Submitted', new Date());
+  await updatePageData(websiteId, page.url, 'Submitted', page.last_crawled_date, new Date());
 
   return NextResponse.json({ message: 'Page submitted for indexing successfully' });
 });

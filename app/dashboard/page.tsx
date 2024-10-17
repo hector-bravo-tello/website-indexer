@@ -34,6 +34,7 @@ import { WithAuth } from '@/components/WithAuth';
 import { PermissionsModal } from '@/components/PermissionsModal';
 import { Website } from '@/types';
 import { useError } from '@/lib/useError';
+import { formatDateToLocal } from '@/utils/dateFormatter';
 
 const Dashboard: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
@@ -245,7 +246,7 @@ const Dashboard: React.FC = () => {
 
   const formatLastScanned = (date: Date | null): string => {
     if (!date) return 'Never';
-    return new Date(date).toLocaleString();
+    return new Date(formatDateToLocal(date)).toLocaleString();
   };
 
   const sortedWebsites = useMemo(() => {

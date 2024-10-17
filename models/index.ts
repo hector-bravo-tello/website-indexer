@@ -207,28 +207,28 @@ export async function createPage(page: Partial<Page>): Promise<{ page: Page, sta
   }
 }
 
-export async function updatePageData(websiteId: number, url: string, indexingStatus: string, lastIndexed: Date | null): Promise<void> {
+export async function updatePageData(websiteId: number, url: string, indexingStatus: string, lastCrawled: Date | null, lastSubmitted: Date | null): Promise<void> {
   try {
     const query = `
       UPDATE pages
       SET indexing_status = $1,
-          last_indexed_date = $2,
+          last_crawled_date = $2,
+          last_submitted_date = $3,
           updated_at = CURRENT_TIMESTAMP
-      WHERE website_id = $3 AND url = $4
+      WHERE website_id = $4 AND url = $5
     `;
-    await pool.query(query, [indexingStatus, lastIndexed, websiteId, url]);
+    await pool.query(query, [indexingStatus, lastCrawled, lastSubmitted, websiteId, url]);
   } catch (error) {
     handleDatabaseError(error);
   }
 }
 
-export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { url: string, lastIndexedDate?: string | null, indexingStatus?: IndexingStatus }[]
+export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { url: string, lastCrawledDate?: string | null, lastSubmittedDate?: string | null, indexingStatus?: IndexingStatus }[]
 ): Promise<{ statusCode: number }> {
   try {
     const query = 'SELECT bulk_upsert_pages($1, $2)';
     await pool.query(query, [websiteId, JSON.stringify(pages)]);
     return { statusCode: 200 };
-
   } catch (error) {
     console.error('Error in addOrUpdatePagesFromSitemap:', error);
     throw error;

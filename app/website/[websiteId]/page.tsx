@@ -29,6 +29,7 @@ import { SyncAlt as SyncIcon } from '@mui/icons-material';
 import { Website, Page } from '@/types';
 import { useError } from '@/lib/useError';
 import IndexingStats from '@/components/IndexingStats';
+import { formatDateToLocal } from '@/utils/dateFormatter';
 
 type SortableColumn = keyof Page | "impressions" | "clicks";
 type Order = 'asc' | 'desc';
@@ -43,7 +44,8 @@ interface HeadCell {
 const headCells: HeadCell[] = [
   { id: 'url', label: 'URL', numeric: false, sortable: true },
   { id: 'indexing_status', label: 'Status', numeric: false, sortable: true },
-  { id: 'last_indexed_date', label: 'Last Crawled', numeric: false, sortable: true },
+  { id: 'last_crawled_date', label: 'Last Crawled', numeric: false, sortable: true },
+  { id: 'last_submitted_date', label: 'Last Submitted', numeric: false, sortable: true },  
   { id: 'impressions', label: 'Impressions', numeric: true, sortable: true },
   { id: 'clicks', label: 'Clicks', numeric: true, sortable: true },
   { id: 'actions', label: 'Actions', numeric: false, sortable: false },
@@ -85,22 +87,34 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const cleanDomain = (domain: string): string => {
-    return domain.replace(/^(sc-domain:)?(https?:\/\/)?(www\.)?/, '');
-  };
+  const cleanDomain = (inputDomain: string): string => {
+    let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
+    try {
+      const url = new URL(cleanedDomain);
+      cleanedDomain = url.hostname;
+    } catch {
+      // If it's not a valid URL, assume it's already just a domain
+    }
+    cleanedDomain = cleanedDomain.replace(/^www\./, '');
+    return cleanedDomain;
+  }
 
   const formatLastCrawled = (date: Date | null): string => {
-    return date ? new Date(date).toLocaleString() : 'Not crawled yet';
+    return date ? new Date(formatDateToLocal(date)).toLocaleString() : 'Not crawled yet';
+  };
+
+  const formatLastSubmitted = (date: Date | null): string => {
+    return date ? new Date(formatDateToLocal(date)).toLocaleString() : '';
   };
 
   const isSortableColumn = (id: string): id is SortableColumn => {
     return id !== 'actions';
   };
 
-  const canSubmitForIndexing = (lastIndexedDate: Date | null): boolean => {
-    if (!lastIndexedDate) return true; // If never indexed, allow submission
+  const canSubmitForIndexing = (lastSubmittedDate: Date | null): boolean => {
+    if (!lastSubmittedDate) return true; // If never submitted, allow submission
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-    return new Date(lastIndexedDate).getTime() <= twentyFourHoursAgo;
+    return new Date(lastSubmittedDate).getTime() <= twentyFourHoursAgo;
   };
 
   const fetchWebsiteDetails = useCallback(async () => {
@@ -384,7 +398,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                     </Typography>
                     <Typography variant="body2">Status: {page.indexing_status}</Typography>
                     <Typography variant="body2">
-                      Last Crawled: {formatLastCrawled(page.last_indexed_date)}
+                      Last Crawled: {formatLastCrawled(page.last_crawled_date)}
+                    </Typography>
+                    <Typography variant="body2">
+                      Last Submitted: {formatLastSubmitted(page.last_submitted_date)}
                     </Typography>
                     <Typography variant="body2">
                       Impressions: {metricsData[page.url]?.impressions || 0}
@@ -398,7 +415,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                       onClick={() => handleSubmitForIndexing(page.id)}
                       disabled={
                         submitting === page.id ||
-                        !canSubmitForIndexing(page.last_indexed_date)
+                        !canSubmitForIndexing(page.last_submitted_date)
                       }
                       sx={{ 
                         mt: 1, 
@@ -457,7 +474,8 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                         {page.url}
                       </TableCell>
                       <TableCell>{page.indexing_status}</TableCell>
-                      <TableCell>{formatLastCrawled(page.last_indexed_date)}</TableCell>
+                      <TableCell>{formatLastCrawled(page.last_crawled_date)}</TableCell>
+                      <TableCell>{formatLastSubmitted(page.last_submitted_date)}</TableCell>
                       <TableCell align="right">{metricsData[page.url]?.impressions || 0}</TableCell>
                       <TableCell align="right">{metricsData[page.url]?.clicks || 0}</TableCell>
                       <TableCell>
@@ -467,7 +485,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                           onClick={() => handleSubmitForIndexing(page.id)}
                           disabled={
                             submitting === page.id ||
-                            !canSubmitForIndexing(page.last_indexed_date)
+                            !canSubmitForIndexing(page.last_submitted_date)
                           }
                           sx={{ 
                             backgroundColor: getSubmitButtonColor(page.indexing_status),

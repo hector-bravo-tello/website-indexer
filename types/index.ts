@@ -29,7 +29,8 @@ export interface Page {
   website_id: number;
   url: string;
   last_sitemap_check: Date | null;
-  last_indexed_date: Date | null;
+  last_crawled_date: Date | null;
+  last_submitted_date: Date | null;
   indexing_status: IndexingStatus;
   created_at: Date;
   updated_at: Date;

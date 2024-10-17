@@ -101,7 +101,7 @@ async function processSitemap(websiteId: number, sitemapUrl: string): Promise<nu
       const indexedPage = indexedPages.find(ip => ip.url === page.url);
       return {
         url: page.url,
-        lastIndexedDate: indexedPage?.lastIndexedDate || null,
+        lastCrawledDate: indexedPage?.lastCrawledDate || null,
         indexingStatus: indexedPage?.indexingStatus || 'unknown' as IndexingStatus
       };
     });
