@@ -6,10 +6,13 @@ import {
   createIndexingJob,
   updateIndexingJob,
   createIndexingJobDetail,
-  updateWebsiteRobotsScan
+  updateWebsiteRobotsScan,
+  createEmailNotification,
+  getUserById
 } from '@/models';
 import { fetchBulkIndexingStatus, submitUrlForIndexing } from './googleSearchConsole';
 import { fetchUrl, extractSitemapUrls, parseSitemap, filterSitemaps, cleanDomain } from './sitemapProcessor';
+import { sendEmail, generateIndexingEmail } from '@/lib/emailService';
 import { promisify } from 'util';
 
 const delay = promisify(setTimeout);
@@ -100,8 +103,49 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
       processed_pages: processedPages 
     });
 
+    // Create email notification
+    const submittedUrls = pagesToUpdate.filter(page => page.indexingStatus === 'Submitted').map(page => page.url);
+    if (submittedUrls.length > 0) {
+      await sendEmailNotification(website.id, website.user_id, website.domain, 'job_complete', submittedUrls);
+    }
+
   } catch (error) {
     console.error(`Error processing website ${website.domain}:`, error);
+    // Send an email notification for failed indexing
+    await sendEmailNotification(website.id, website.user_id, website.domain, 'job_failed', []);
+
     throw error;
+  }
+}
+
+async function sendEmailNotification(websiteId: number, userId: number, domain: string, type: 'job_complete' | 'job_failed', submittedUrls: string[]) {
+  try {
+    // generate the email body
+    const content = generateIndexingEmail(domain, submittedUrls);
+    
+    const { user } = await getUserById(userId);
+    if (user && user.email) {
+      // send the email
+      await sendEmail({
+        to: user.email,
+        subject: `Indexing ${type === 'job_complete' ? 'Completed' : 'Failed'} for ${domain}`,
+        html: content,
+      });
+      console.log(`Email notification sent to ${user.email} for website ${domain}`);
+
+    // add a record to the email_notifications table in database
+    await createEmailNotification({
+      user_id: userId,
+      website_id: websiteId,
+      type,
+      content
+    });
+
+    } else {
+      console.error(`User email not found for user ID ${userId}`);
+    }
+
+  } catch (error) {
+    console.error(`Error sending email notification for website ${domain}:`, error);
   }
 }

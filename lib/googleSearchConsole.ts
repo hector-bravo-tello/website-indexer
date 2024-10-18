@@ -99,12 +99,6 @@ export async function fetchBulkIndexingStatus(websiteId: number, urls: string[])
     }
   }, 100);
 
-  /*
-  for (const result of results) {
-    await updatePageData(websiteId, result.url, result.indexingStatus, result.lastIndexedDate);
-  }
-  */
-
   return results;
 }
 

@@ -82,7 +82,7 @@ export interface EmailNotification {
   created_at: Date;
 }
 
-export type NotificationType = 'indexing_complete' | 'indexing_failed' | 'new_page_found';
+export type NotificationType = 'job_complete' | 'job_failed';
 
 export interface IndexingStatsData {
   total_pages: number;

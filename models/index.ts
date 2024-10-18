@@ -16,6 +16,20 @@ function handleDatabaseError(error: any): never {
   }
 }
 
+export async function getUserById(id: number): Promise<{ user: User | null, statusCode: number }> {
+  try {
+    const query = 'SELECT * FROM users WHERE id = $1';
+    const result = await pool.query(query, [id]);
+    let user = result.rows[0] || null;
+    if (user) {
+      user.id = user.id.toString(); // Convert ID to string
+    }
+    return { user, statusCode: user ? 200 : 404 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
 export async function getUserByEmail(email: string): Promise<{ user: User | null, statusCode: number }> {
   try {
     const query = 'SELECT * FROM users WHERE email = $1';
