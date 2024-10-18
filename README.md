@@ -60,6 +60,8 @@ The Website Indexer App is a web-based tool designed to streamline and automate 
    DAILY_INDEXING_API_KEY=your_daily_indexing_api_key
    ```
 
+   Read GOOGLE-APIS.md for the instructions on getting the values for the Google API's environment variables
+
 4. Run database migrations:
    ```
    npm run migrate
