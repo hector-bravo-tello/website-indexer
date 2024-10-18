@@ -26,7 +26,8 @@ CREATE TABLE pages (
     website_id INTEGER REFERENCES websites(id) ON DELETE CASCADE,
     url VARCHAR(2048) NOT NULL,
     last_sitemap_check TIMESTAMP WITH TIME ZONE,
-    last_indexed_date TIMESTAMP WITH TIME ZONE,
+    last_crawled_date TIMESTAMP WITH TIME ZONE,
+    last_submitted_date TIMESTAMP WITH TIME ZONE,
     indexing_status VARCHAR(50),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -105,7 +106,7 @@ BEGIN
           WHERE indexing_job_details.page_id = pages.id
             AND indexing_job_details.status = 'pending'
       )
-    ORDER BY last_sitemap_check ASC NULLS FIRST, last_indexed_date ASC NULLS FIRST
+    ORDER BY last_sitemap_check ASC NULLS FIRST, last_crawled_date ASC NULLS FIRST
     LIMIT p_limit;
 END;
 $$ LANGUAGE plpgsql;
@@ -134,28 +135,34 @@ BEGIN
     INSERT INTO pages (
       website_id, 
       url, 
-      last_indexed_date, 
+      last_crawled_date, 
       indexing_status, 
-      last_sitemap_check
+      last_sitemap_check,
+      last_submitted_date
     ) VALUES (
       p_website_id,
       v_page->>'url',
-      (v_page->>'lastIndexedDate')::TIMESTAMP WITH TIME ZONE,
+      (v_page->>'lastCrawledDate')::TIMESTAMP WITH TIME ZONE,
       v_page->>'indexingStatus',
-      CURRENT_TIMESTAMP
+      CURRENT_TIMESTAMP,
+      (v_page->>'lastSubmittedDate')::TIMESTAMP WITH TIME ZONE
     )
     ON CONFLICT (website_id, url) 
     DO UPDATE SET 
-      last_indexed_date = COALESCE(
-        (v_page->>'lastIndexedDate')::TIMESTAMP WITH TIME ZONE,
-        pages.last_indexed_date
+      last_crawled_date = COALESCE(
+        (v_page->>'lastCrawledDate')::TIMESTAMP WITH TIME ZONE,
+        pages.last_crawled_date
       ),
       indexing_status = COALESCE(
         v_page->>'indexingStatus',
         pages.indexing_status
       ),
       last_sitemap_check = CURRENT_TIMESTAMP,
-      updated_at = CURRENT_TIMESTAMP;
+      updated_at = CURRENT_TIMESTAMP,
+      last_submitted_date = COALESCE(
+        (v_page->>'lastSubmittedDate')::TIMESTAMP WITH TIME ZONE,
+        pages.last_submitted_date
+      );
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
