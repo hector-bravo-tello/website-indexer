@@ -55,7 +55,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
 
     // Submit non-indexed pages
     let processedPages = 0;
-    const current_time = Date.now();
+    const current_time = new Date().toISOString();
     for (const page of indexedPages) {
       if (page.indexingStatus !== indexed) {
         try {
@@ -83,8 +83,9 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
       url: page.url,
       indexingStatus: page.indexingStatus,
       lastCrawledDate: page.lastCrawledDate,
-      lastSubmittedDate: current_time.toString()
+      lastSubmittedDate: page.indexingStatus === 'Submitted' ? current_time : existingPages.find(p => p.url === page.url)?.last_submitted_date?.toISOString()
     }));
+    console.log('Pages to Update: ', pagesToUpdate);
 
     // Update database with final indexing data
     await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
