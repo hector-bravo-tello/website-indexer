@@ -104,7 +104,8 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
     const query = `
       SELECT * FROM websites 
       WHERE enabled = true 
-      AND (last_robots_scan IS NULL OR last_robots_scan < NOW() - INTERVAL '21 hours')
+      AND auto_indexing_enabled = true
+      AND (last_auto_index IS NULL OR last_auto_index < NOW() - INTERVAL '21 hours')
     `;
     const result = await pool.query(query);
     return { websites: result.rows, statusCode: 200 };
@@ -146,10 +147,10 @@ export async function updateWebsite(id: number, website: Partial<Website>): Prom
   }
 }
 
-export async function updateWebsiteRobotsScan(id: number): Promise<{ statusCode: number }> {
+export async function updateWebsiteTimestamps(id: number, updateLastSync: boolean = false, updateLastAutoIndex: boolean = false): Promise<{ statusCode: number }> {
   try {
-    const query = 'SELECT update_website_robots_scan($1)';
-    await pool.query(query, [id]);
+    const query = 'SELECT update_website_timestamps($1, $2, $3)';
+    await pool.query(query, [id, updateLastSync, updateLastAutoIndex]);
     return { statusCode: 200 };
   } catch (error) {
     handleDatabaseError(error);

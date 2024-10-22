@@ -6,7 +6,7 @@ import {
   createIndexingJob,
   updateIndexingJob,
   createIndexingJobDetail,
-  updateWebsiteRobotsScan,
+  updateWebsiteTimestamps,
   createEmailNotification,
   getUserById
 } from '@/models';
@@ -95,8 +95,8 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
       await removePages(website.id, removedUrls.map(page => page.id));
     }
 
-    // Update the last website scanned date
-    await updateWebsiteRobotsScan(website.id);
+    // Update both last_sync and last_auto_index timestamps
+    await updateWebsiteTimestamps(website.id, true, true);
 
     // update the the Indexing Job completion
     await updateIndexingJob(job.job.id, { 

@@ -50,6 +50,11 @@ const Dashboard: React.FC = () => {
     severity: 'success',
   });
   const [serviceAccountEmail, setServiceAccountEmail] = useState('');
+  const [initialScanTime, setInitialScanTime] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollingAttempts, setPollingAttempts] = useState(0);
+  const MAX_POLLING_ATTEMPTS = 3;
+  
   const setError = useError();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -92,6 +97,56 @@ const Dashboard: React.FC = () => {
     }
   }, [setError]);
 
+  const checkJobStatus = useCallback(async () => {
+    if (!initialScanTime) return;
+  
+    try {
+      const response = await fetch(`/api/websites/status?initialScanTime=${initialScanTime}`);
+      if (!response.ok) {
+        throw new Error('Failed to check sync status');
+      }
+      const data = await response.json();
+      
+      if (data.isCompleted) {
+        setIsPolling(false);
+        await fetchWebsites();
+        setSnackbar({
+          open: true,
+          message: 'Websites sync completed',
+          severity: 'success',
+        });
+      } else {
+        setPollingAttempts(prevAttempts => prevAttempts + 1);
+        if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
+          setIsPolling(false);
+          setSnackbar({
+            open: true,
+            message: 'Sync taking longer than expected. Please check back later.',
+            severity: 'error',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking sync status:', error);
+      setIsPolling(false);
+      setError('Failed to check sync status. Please try again later.');
+    }
+  }, [initialScanTime, fetchWebsites, pollingAttempts, setError]);
+
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+  
+    if (isPolling && pollingAttempts < MAX_POLLING_ATTEMPTS) {
+      intervalId = setInterval(checkJobStatus, 5000); // Poll every 5 seconds
+    }
+  
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isPolling, checkJobStatus, pollingAttempts]);
+
   useEffect(() => {
     fetchWebsites();
     fetchServiceAccountEmail();
@@ -110,11 +165,19 @@ const Dashboard: React.FC = () => {
         throw new Error('Failed to toggle indexing');
       }
       const data = await response.json();
+      
       setWebsites(prevWebsites => 
         prevWebsites?.map(website => 
           website.id === websiteId ? { ...website, enabled: !currentStatus } : website
         ) || null
       );
+
+      if (data.initialScanTime) {
+        setInitialScanTime(data.initialScanTime);
+        setIsPolling(true);
+        setPollingAttempts(0);
+      }
+
       setSnackbar({
         open: true,
         message: data.message,
@@ -123,11 +186,6 @@ const Dashboard: React.FC = () => {
     } catch (error) {
       console.error('Error toggling indexing:', error);
       setError('Failed to update indexing status. Please try again later.');
-      setSnackbar({
-        open: true,
-        message: 'Failed to update indexing status',
-        severity: 'error',
-      });
     }
   };
 
@@ -157,19 +215,12 @@ const Dashboard: React.FC = () => {
     } catch (error) {
       console.error('Error toggling auto-indexing:', error);
       setError('Failed to update auto-indexing status. Please try again later.');
-      setSnackbar({
-        open: true,
-        message: 'Failed to update auto-indexing status',
-        severity: 'error',
-      });
     }
   };
 
   const handleVerifyOwnershipPermissions = async (websiteId: number) => {
     try {
-      const response = await fetch(`/api/websites/${websiteId}/verify-ownership`, {
-        method: 'GET',
-      });
+      const response = await fetch(`/api/websites/${websiteId}/verify-ownership`);
       if (!response.ok) {
         throw new Error('Failed to verify ownership permissions');
       }
@@ -181,17 +232,12 @@ const Dashboard: React.FC = () => {
       );
       setSnackbar({
         open: true,
-        message: data.is_owner ? 'Ownership verified successfully' : 'Service account has no ownership permissions',
+        message: data.message,
         severity: data.is_owner ? 'success' : 'error',
       });
     } catch (error) {
       console.error('Error verifying permissions:', error);
       setError('Failed to verify permissions. Please try again later.');
-      setSnackbar({
-        open: true,
-        message: 'Failed to verify permissions',
-        severity: 'error',
-      });
     }
   };
 
@@ -202,20 +248,23 @@ const Dashboard: React.FC = () => {
       if (!response.ok) {
         throw new Error('Failed to refresh websites');
       }
+      const data = await response.json();
       await fetchWebsites();
+      
+      if (data.initialScanTime) {
+        setInitialScanTime(data.initialScanTime);
+        setIsPolling(true);
+        setPollingAttempts(0);
+      }
+
       setSnackbar({
         open: true,
-        message: 'Websites refreshed successfully',
+        message: data.message,
         severity: 'success',
       });
     } catch (error) {
       console.error('Error refreshing websites:', error);
       setError('Failed to refresh websites. Please try again later.');
-      setSnackbar({
-        open: true,
-        message: 'Failed to refresh websites',
-        severity: 'error',
-      });
     } finally {
       setLoading(false);
     }
@@ -257,7 +306,7 @@ const Dashboard: React.FC = () => {
       if (orderBy === 'domain') {
         valueA = extractDomain(valueA as string);
         valueB = extractDomain(valueB as string);
-      } else if (orderBy === 'last_robots_scan') {
+      } else if (orderBy === 'last_sync') {
         valueA = valueA ? new Date(valueA as Date).getTime() : 0;
         valueB = valueB ? new Date(valueB as Date).getTime() : 0;
       }
@@ -318,8 +367,9 @@ const Dashboard: React.FC = () => {
             startIcon={<RefreshIcon />}
             onClick={handleRefresh}
             variant="outlined"
+            disabled={isPolling}
           >
-            Refresh from Google Search Console
+            {isPolling ? 'Syncing...' : 'Refresh from Google Search Console'}
           </Button>
         </Grid>
       </Grid>
@@ -333,7 +383,24 @@ const Dashboard: React.FC = () => {
                 <Card key={website.id} sx={{ mb: 2 }}>
                   <CardContent>
                     <Typography variant="subtitle1" sx={{ mb: 1, wordBreak: 'break-all' }}>
-                      {extractDomain(website.domain)}
+                      {website.enabled ? (
+                        <Link href={`/website/${website.id}`} passHref>
+                          <Typography
+                            component="a"
+                            sx={{
+                              color: 'primary.main',
+                              textDecoration: 'none',
+                              '&:hover': {
+                                textDecoration: 'underline',
+                              },
+                            }}
+                          >
+                            {extractDomain(website.domain)}
+                          </Typography>
+                        </Link>
+                      ) : (
+                        extractDomain(website.domain)
+                      )}
                     </Typography>
                     <Typography variant="body2">
                       Enabled: 
@@ -359,7 +426,10 @@ const Dashboard: React.FC = () => {
                       />
                     </Typography>
                     <Typography variant="body2">
-                      Last Scanned: {formatLastScanned(website.last_robots_scan)}
+                      Last Synced: {formatLastScanned(website.last_sync)}
+                    </Typography>
+                    <Typography variant="body2">
+                      Last Auto-Index: {formatLastScanned(website.last_auto_index)}
                     </Typography>
                   </CardContent>
                 </Card>
@@ -385,11 +455,20 @@ const Dashboard: React.FC = () => {
                     <TableCell>Auto-indexing</TableCell>
                     <TableCell>
                       <TableSortLabel
-                        active={orderBy === 'last_robots_scan'}
-                        direction={orderBy === 'last_robots_scan' ? order : 'asc'}
-                        onClick={() => handleRequestSort('last_robots_scan')}
+                        active={orderBy === 'last_sync'}
+                        direction={orderBy === 'last_sync' ? order : 'asc'}
+                        onClick={() => handleRequestSort('last_sync')}
                       >
-                        Last Scanned
+                        Last Synced
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={orderBy === 'last_auto_index'}
+                        direction={orderBy === 'last_auto_index' ? order : 'asc'}
+                        onClick={() => handleRequestSort('last_auto_index')}
+                      >
+                        Last Auto-Index
                       </TableSortLabel>
                     </TableCell>
                   </TableRow>
@@ -438,7 +517,8 @@ const Dashboard: React.FC = () => {
                           disabled={!website.is_owner}
                         />
                       </TableCell>
-                      <TableCell>{formatLastScanned(website.last_robots_scan)}</TableCell>
+                      <TableCell>{formatLastScanned(website.last_sync)}</TableCell>
+                      <TableCell>{formatLastScanned(website.last_auto_index)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -471,6 +551,7 @@ const Dashboard: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
       <PermissionsModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}

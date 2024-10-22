@@ -44,10 +44,10 @@ interface HeadCell {
 const headCells: HeadCell[] = [
   { id: 'url', label: 'URL', numeric: false, sortable: true },
   { id: 'indexing_status', label: 'Status', numeric: false, sortable: true },
-  { id: 'last_crawled_date', label: 'Last Crawled', numeric: false, sortable: true },
-  { id: 'last_submitted_date', label: 'Last Submitted', numeric: false, sortable: true },  
   { id: 'impressions', label: 'Impressions', numeric: true, sortable: true },
   { id: 'clicks', label: 'Clicks', numeric: true, sortable: true },
+  { id: 'last_crawled_date', label: 'Last Crawled', numeric: false, sortable: true },
+  { id: 'last_submitted_date', label: 'Last Submitted', numeric: false, sortable: true },  
   { id: 'actions', label: 'Actions', numeric: false, sortable: false },
 ];
 
@@ -82,6 +82,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [isPolling, setIsPolling] = useState(false);
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const MAX_POLLING_ATTEMPTS = 3;
+  const [statsRefreshTrigger, setStatsRefreshTrigger] = useState(0);
 
   const setGlobalError = useError();
   const theme = useTheme();
@@ -267,6 +268,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       
       if (data.isCompleted) {
         setIsPolling(false);
+        setStatsRefreshTrigger(prev => prev + 1);
         await fetchWebsiteDetails();
         setSnackbar({
           open: true,
@@ -379,7 +381,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         </Grid>
       </Grid>
 
-      <IndexingStats websiteId={websiteId} />
+      <IndexingStats websiteId={websiteId} refreshTrigger={statsRefreshTrigger} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4, mb: 2 }}>
         Pages
@@ -396,18 +398,20 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                     <Typography variant="subtitle1" sx={{ mb: 1, wordBreak: 'break-all' }}>
                       {page.url}
                     </Typography>
-                    <Typography variant="body2">Status: {page.indexing_status}</Typography>
                     <Typography variant="body2">
-                      Last Crawled: {formatLastCrawled(page.last_crawled_date)}
-                    </Typography>
-                    <Typography variant="body2">
-                      Last Submitted: {formatLastSubmitted(page.last_submitted_date)}
+                      Status: {page.indexing_status}
                     </Typography>
                     <Typography variant="body2">
                       Impressions: {metricsData[page.url]?.impressions || 0}
                     </Typography>
                     <Typography variant="body2">
                       Clicks: {metricsData[page.url]?.clicks || 0}
+                    </Typography>
+                    <Typography variant="body2">
+                      Last Crawled: {formatLastCrawled(page.last_crawled_date)}
+                    </Typography>
+                    <Typography variant="body2">
+                      Last Submitted: {formatLastSubmitted(page.last_submitted_date)}
                     </Typography>
                     <Button
                       variant="contained"
@@ -474,10 +478,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                         {page.url}
                       </TableCell>
                       <TableCell>{page.indexing_status}</TableCell>
-                      <TableCell>{formatLastCrawled(page.last_crawled_date)}</TableCell>
-                      <TableCell>{formatLastSubmitted(page.last_submitted_date)}</TableCell>
                       <TableCell align="right">{metricsData[page.url]?.impressions || 0}</TableCell>
                       <TableCell align="right">{metricsData[page.url]?.clicks || 0}</TableCell>
+                      <TableCell>{formatLastCrawled(page.last_crawled_date)}</TableCell>
+                      <TableCell>{formatLastSubmitted(page.last_submitted_date)}</TableCell>
                       <TableCell>
                         <Button
                           variant="contained"

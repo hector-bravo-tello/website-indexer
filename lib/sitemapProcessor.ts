@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import { Website, Page, IndexingStatus } from '@/types';
 import { 
   addOrUpdatePagesFromSitemap, 
-  updateWebsiteRobotsScan, 
+  updateWebsiteTimestamps, 
   getPagesByWebsiteId,
   removePages
 } from '@/models';
@@ -41,7 +41,8 @@ export async function processSingleWebsite(website: Website): Promise<void> {
     }
 
     console.log(`Processed ${totalPages} pages for ${cleanedDomain}`);
-    await updateWebsiteRobotsScan(website.id);
+    // Update only last_sync timestamp for manual sync
+    await updateWebsiteTimestamps(website.id, true, false);
   } catch (error) {
     console.error(`Error processing website ${cleanDomain(website.domain)}:`, error);
   }

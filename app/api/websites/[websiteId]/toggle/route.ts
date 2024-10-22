@@ -8,6 +8,8 @@ import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
 import jobQueue from '@/lib/jobQueue';
 
+// File: app/api/websites/[websiteId]/toggle/route.ts
+
 export const POST = withErrorHandling(async (request: NextRequest) => {
   const session = await getServerSession(authOptions);
 
@@ -37,14 +39,14 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new ValidationError('Invalid request body. Expected "enabled" or "auto_indexing_enabled" boolean field.');
   }
 
-  const { website: updatedWebsite } = await updateWebsite(websiteId, { enabled: enabled, auto_indexing_enabled: auto_indexing_enabled });
+  const { website: updatedWebsite } = await updateWebsite(websiteId, { enabled, auto_indexing_enabled });
 
   let message: string = '';
   let shouldRunJob: boolean = false;
 
   if (enabled) {
     message = auto_indexing_enabled ? 'Website enabled. Auto-indexing enabled.' : 'Website enabled. Auto-indexing disabled.';
-    shouldRunJob = !website.last_robots_scan || new Date(website.last_robots_scan).getTime() < Date.now() - 1 * 60 * 60 * 1000;
+    shouldRunJob = !website.last_sync || new Date(website.last_sync).getTime() < Date.now() - 1 * 60 * 60 * 1000;
 
     if (shouldRunJob) {
       try {
@@ -62,7 +64,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   return NextResponse.json({ 
     website: updatedWebsite, 
     message,
-    initialScanTime: website.last_robots_scan?.toISOString()
+    initialScanTime: website.last_sync?.toISOString()
   });
 });
 
@@ -86,10 +88,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new NotFoundError('Website not found');
   }
 
-  const isCompleted = website.last_robots_scan && new Date(website.last_robots_scan) > new Date(initialScanTime);
+  const isCompleted = website.last_sync && new Date(website.last_sync) > new Date(initialScanTime);
 
   return NextResponse.json({ 
     isCompleted,
-    lastScanTime: website.last_robots_scan?.toISOString()
+    lastScanTime: website.last_sync?.toISOString()
   });
 });

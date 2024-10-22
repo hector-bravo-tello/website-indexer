@@ -13,7 +13,8 @@ CREATE TABLE websites (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     domain VARCHAR(255) NOT NULL,
-    last_robots_scan TIMESTAMP WITH TIME ZONE,
+    last_sync TIMESTAMP WITH TIME ZONE,
+    last_auto_index TIMESTAMP WITH TIME ZONE,
     enabled BOOLEAN DEFAULT false,
     auto_indexing_enabled BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -72,6 +73,8 @@ CREATE TABLE email_notifications (
 
 -- Create indexes
 CREATE INDEX idx_websites_user_id ON websites(user_id);
+CREATE INDEX idx_websites_last_sync ON websites(last_sync);
+CREATE INDEX idx_websites_last_auto_index ON websites(last_auto_index);
 CREATE INDEX idx_pages_website_id ON pages(website_id);
 CREATE INDEX idx_pages_indexing_status ON pages(indexing_status);
 CREATE INDEX idx_website_indexing_status ON pages (website_id, indexing_status);
@@ -111,18 +114,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create function to update website last_robots_scan
-CREATE OR REPLACE FUNCTION update_website_robots_scan(p_website_id INTEGER)
+-- Create combined update function for both timestamps
+CREATE OR REPLACE FUNCTION update_website_timestamps(
+    p_website_id INTEGER,
+    p_update_sync BOOLEAN DEFAULT false,
+    p_update_auto_index BOOLEAN DEFAULT false
+)
 RETURNS VOID AS $$
 BEGIN
     UPDATE websites
-    SET last_robots_scan = CURRENT_TIMESTAMP,
+    SET last_sync = CASE WHEN p_update_sync THEN CURRENT_TIMESTAMP ELSE last_sync END,
+        last_auto_index = CASE WHEN p_update_auto_index THEN CURRENT_TIMESTAMP ELSE last_auto_index END,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = p_website_id;
 END;
 $$ LANGUAGE plpgsql;
 
-
+-- Add or update pages
 CREATE OR REPLACE FUNCTION bulk_upsert_pages(
   p_website_id INT,
   p_pages JSONB
@@ -256,15 +264,21 @@ CREATE OR REPLACE FUNCTION get_indexing_stats(input_website_id INT)
 RETURNS TABLE (
     total_pages BIGINT,
     indexed_pages BIGINT,
-    not_indexed_pages BIGINT
+    not_indexed_pages BIGINT,
+    last_sync TIMESTAMP WITH TIME ZONE,
+    last_auto_index TIMESTAMP WITH TIME ZONE
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
-        COUNT(*) AS total_pages,
-        SUM(CASE WHEN indexing_status = 'Submitted and indexed' THEN 1 ELSE 0 END) AS indexed_pages,
-        SUM(CASE WHEN indexing_status <> 'Submitted and indexed' THEN 1 ELSE 0 END) AS not_indexed_pages
-    FROM pages
-    WHERE website_id = input_website_id;
+        COALESCE(COUNT(p.id), 0) AS total_pages,
+        COALESCE(SUM(CASE WHEN p.indexing_status = 'Submitted and indexed' THEN 1 ELSE 0 END), 0) AS indexed_pages,
+        COALESCE(SUM(CASE WHEN p.indexing_status <> 'Submitted and indexed' THEN 1 ELSE 0 END), 0) AS not_indexed_pages,
+        w.last_sync,
+        w.last_auto_index
+    FROM websites w
+    LEFT JOIN pages p ON w.id = p.website_id
+    WHERE w.id = input_website_id
+    GROUP BY w.id;
 END;
 $$ LANGUAGE plpgsql;

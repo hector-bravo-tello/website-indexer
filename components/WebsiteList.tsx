@@ -1,3 +1,5 @@
+// components/WebsiteList.tsx
+
 import React from 'react';
 import { 
   List, 
@@ -6,57 +8,61 @@ import {
   ListItemSecondaryAction, 
   Switch, 
   Typography, 
-  Button 
+  Button,
+  CircularProgress
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
 import { Website } from '@/types';
+import { formatDateToLocal } from '@/utils/dateFormatter';
 
 interface WebsiteListProps {
   websites: Website[];
   onToggleIndexing: (websiteId: number, currentStatus: boolean) => Promise<void>;
   onRefresh: () => Promise<void>;
+  loading?: boolean;
 }
 
-const WebsiteList: React.FC<WebsiteListProps> = ({ websites, onToggleIndexing, onRefresh }) => {
-  const handleToggle = async (websiteId: number, currentStatus: boolean) => {
-    await onToggleIndexing(websiteId, currentStatus);
-  };
-
-  const formatLastScanned = (date: Date | null | undefined): string => {
-    if (!date) return 'None';
-    const formattedDate = new Date(date).toLocaleString();
-    return formattedDate !== 'Invalid Date' ? formattedDate : 'None';
+const WebsiteList: React.FC<WebsiteListProps> = ({ 
+  websites, 
+  onToggleIndexing, 
+  onRefresh,
+  loading = false 
+}) => {
+  const formatLastScanned = (date: Date | null): string => {
+    return date ? formatDateToLocal(date) : 'Never';
   };
 
   return (
     <>
       <Button
-        startIcon={<RefreshIcon />}
+        startIcon={loading ? <CircularProgress size={20} /> : <RefreshIcon />}
         onClick={onRefresh}
         variant="outlined"
+        disabled={loading}
         style={{ marginBottom: '1rem' }}
       >
-        Refresh from Search Console
+        {loading ? 'Refreshing...' : 'Refresh from Search Console'}
       </Button>
       <List>
         {websites.map((website) => (
           <ListItem key={website.id} component="div">
             <ListItemText 
               primary={website.domain}
-              secondary={`Last scanned: ${formatLastScanned(website.last_robots_scan)}`}
+              secondary={`Last synced: ${formatLastScanned(website.last_sync)}`}
             />
             <ListItemSecondaryAction>
               <Switch
                 edge="end"
-                onChange={() => handleToggle(website.id, website.auto_indexing_enabled)}
+                onChange={() => onToggleIndexing(website.id, website.auto_indexing_enabled)}
                 checked={website.auto_indexing_enabled}
+                disabled={!website.is_owner}
               />
             </ListItemSecondaryAction>
           </ListItem>
         ))}
         {websites.length === 0 && (
           <Typography variant="body2" color="textSecondary" align="center">
-            No websites found. Click &quote;Refresh from Search Console&quote; to fetch your properties.
+            No websites found. Click &quot;Refresh from Search Console&quot; to fetch your properties.
           </Typography>
         )}
       </List>

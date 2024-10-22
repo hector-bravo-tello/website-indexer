@@ -19,7 +19,8 @@ export interface Website {
   enabled: boolean;
   auto_indexing_enabled: boolean;
   is_owner: boolean | null;
-  last_robots_scan: Date | null;
+  last_sync: Date | null;
+  last_auto_index: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -88,4 +89,6 @@ export interface IndexingStatsData {
   total_pages: number;
   indexed_pages: number;
   not_indexed_pages: number;
+  last_sync: Date | null;
+  last_auto_index: Date | null;
 }

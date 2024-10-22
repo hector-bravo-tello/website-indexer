@@ -1,3 +1,5 @@
+// components/PermissionsModal.tsx
+
 import React, { useState } from 'react';
 import { 
   Dialog, 
@@ -32,6 +34,13 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
+    props,
+    ref,
+  ) {
+    return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
+  });
+
   const handleCopyEmail = async () => {
     try {
       await navigator.clipboard.writeText(serviceAccountEmail);
@@ -40,20 +49,6 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
       console.error('Failed to copy text: ', err);
     }
   };
-
-  const handleCloseCopySuccess = (event?: React.SyntheticEvent | Event, reason?: string) => {
-    if (reason === 'clickaway') {
-      return;
-    }
-    setCopySuccess(false);
-  };
-
-  const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
-    props,
-    ref,
-  ) {
-    return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
-  });
 
   return (
     <Dialog 
@@ -127,8 +122,13 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
           Close
         </Button>
       </DialogActions>
-      <Snackbar open={copySuccess} autoHideDuration={3000} onClose={handleCloseCopySuccess}>
-        <Alert onClose={handleCloseCopySuccess} severity="success" sx={{ width: '100%' }}>
+      <Snackbar 
+        open={copySuccess} 
+        autoHideDuration={3000} 
+        onClose={() => setCopySuccess(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setCopySuccess(false)} severity="success">
           Email copied to clipboard!
         </Alert>
       </Snackbar>
