@@ -64,7 +64,7 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
             indexing_job_id: job.job.id,
             page_id: existingPages.find(p => p.url === page.url)?.id || 0,
             status: 'Submitted',
-            response: JSON.stringify(response)
+            response: JSON.stringify(response.data)
           });
           processedPages++;
         } catch (error) {
@@ -83,9 +83,8 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
       url: page.url,
       indexingStatus: page.indexingStatus,
       lastCrawledDate: page.lastCrawledDate,
-      lastSubmittedDate: page.indexingStatus === 'Submitted' ? current_time : existingPages.find(p => p.url === page.url)?.last_submitted_date?.toISOString()
+      lastSubmittedDate: page.indexingStatus !== indexed ? current_time : existingPages.find(p => p.url === page.url)?.last_submitted_date?.toISOString()
     }));
-    console.log('Pages to Update: ', pagesToUpdate);
 
     // Update database with final indexing data
     await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
@@ -114,7 +113,6 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     console.error(`Error processing website ${website.domain}:`, error);
     // Send an email notification for failed indexing
     await sendEmailNotification(website.id, website.user_id, website.domain, 'job_failed', []);
-
     throw error;
   }
 }
