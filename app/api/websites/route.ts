@@ -4,8 +4,6 @@ import { authOptions } from '@/lib/authOptions';
 import { getWebsitesByUserId } from '@/models';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError } from '@/utils/errors';
-import { verifyWebsiteOwnership } from '@/lib/googleSearchConsole';
-import { Website } from '@/types';
 
 export const GET = withErrorHandling(async () => {
   const session = await getServerSession(authOptions);
@@ -21,18 +19,5 @@ export const GET = withErrorHandling(async () => {
     return NextResponse.json([]);
   }
 
-  const websitesWithOwnership: Website[] = await Promise.all(
-    websites.map(async (website) => {
-      try {
-        const isOwner = await verifyWebsiteOwnership(website.domain);
-        return { ...website, is_owner: isOwner };
-
-      } catch (error) {
-        console.error(`Error verifying ownership for ${website.domain}:`, error);
-        return { ...website, is_owner: null };
-      }
-    })
-  );
-
-  return NextResponse.json(websitesWithOwnership);
+  return NextResponse.json(websites);
 });

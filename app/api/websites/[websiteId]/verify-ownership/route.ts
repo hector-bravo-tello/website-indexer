@@ -1,8 +1,7 @@
-// File: app/api/websites/[websiteId]/verify-ownership/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from '@/lib/authOptions';
-import { getWebsiteById } from '@/models';
+import { getWebsiteById, updateWebsiteOwnership } from '@/models';
 import { verifyWebsiteOwnership } from '@/lib/googleSearchConsole';
 import { withErrorHandling } from '@/utils/apiUtils';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/utils/errors';
@@ -30,6 +29,11 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const isOwner = await verifyWebsiteOwnership(website.domain);
+
+  // Only update database if ownership status has changed
+  if (isOwner !== website.is_owner) {
+    await updateWebsiteOwnership(websiteId, isOwner);
+  }
 
   return NextResponse.json({ 
     is_owner: isOwner,

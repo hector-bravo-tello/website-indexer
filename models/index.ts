@@ -101,12 +101,7 @@ export async function getIndexingStatsByWebsiteId(id: number): Promise<{ indexin
 
 export async function getWebsitesForIndexing(): Promise<{ websites: Website[], statusCode: number }> {
   try {
-    const query = `
-      SELECT * FROM websites 
-      WHERE enabled = true 
-      AND auto_indexing_enabled = true
-      AND (last_auto_index IS NULL OR last_auto_index < NOW() - INTERVAL '21 hours')
-    `;
+    const query = 'SELECT * FROM get_websites_for_auto_indexing()';
     const result = await pool.query(query);
     return { websites: result.rows, statusCode: 200 };
   } catch (error) {
@@ -116,9 +111,9 @@ export async function getWebsitesForIndexing(): Promise<{ websites: Website[], s
 
 export async function createWebsite(website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
   try {
-    const { user_id, domain, enabled, auto_indexing_enabled } = website;
-    const query = 'INSERT INTO websites (user_id, domain, enabled, auto_indexing_enabled) VALUES ($1, $2, $3, $4) RETURNING *';
-    const result = await pool.query(query, [user_id, domain, enabled, auto_indexing_enabled]);
+    const { user_id, domain, enabled, auto_indexing_enabled, is_owner } = website;
+    const query = 'INSERT INTO websites (user_id, domain, enabled, auto_indexing_enabled, is_owner) VALUES ($1, $2, $3, $4, $5) RETURNING *';
+    const result = await pool.query(query, [user_id, domain, enabled, auto_indexing_enabled, is_owner]);
     return { website: result.rows[0], statusCode: 201 };
   } catch (error) {
     handleDatabaseError(error);
@@ -127,17 +122,37 @@ export async function createWebsite(website: Partial<Website>): Promise<{ websit
 
 export async function updateWebsite(id: number, website: Partial<Website>): Promise<{ website: Website, statusCode: number }> {
   try {
-    const { domain, enabled, auto_indexing_enabled } = website;
+    const { domain, enabled, auto_indexing_enabled, is_owner } = website;
     const query = `
       UPDATE websites 
       SET domain = COALESCE($1, domain), 
-          enabled = COALESCE($2, enabled),      
+          enabled = COALESCE($2, enabled),
           auto_indexing_enabled = COALESCE($3, auto_indexing_enabled),
+          is_owner = COALESCE($4, is_owner),
           updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $4 
+      WHERE id = $5 
       RETURNING *
     `;
-    const result = await pool.query(query, [domain, enabled, auto_indexing_enabled, id]);
+    const result = await pool.query(query, [domain, enabled, auto_indexing_enabled, is_owner, id]);
+    if (result.rowCount === 0) {
+      throw new DatabaseError('Website not found');
+    }
+    return { website: result.rows[0], statusCode: 200 };
+  } catch (error) {
+    handleDatabaseError(error);
+  }
+}
+
+export async function updateWebsiteOwnership(id: number, isOwner: boolean): Promise<{ website: Website, statusCode: number }> {
+  try {
+    const query = `
+      UPDATE websites 
+      SET is_owner = $1,
+          updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $2 
+      RETURNING *
+    `;
+    const result = await pool.query(query, [isOwner, id]);
     if (result.rowCount === 0) {
       throw new DatabaseError('Website not found');
     }
@@ -327,7 +342,7 @@ export async function updateIndexingJobDetail(id: number, detail: Partial<Indexi
 export async function createEmailNotification(notification: Partial<EmailNotification>): Promise<{ notification: EmailNotification, statusCode: number }> {
   try {
     const { user_id, website_id, type, content } = notification;
-    const query = 'SELECT * FROM create_email_notification($1, $2, $3, $4)';
+    const query = 'INSERT INTO email_notifications (user_id, website_id, type, content) VALUES ($1, $2, $3, $4)';
     const result = await pool.query(query, [user_id, website_id, type, content]);
     return { notification: result.rows[0], statusCode: 201 };
   } catch (error) {

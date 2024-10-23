@@ -25,7 +25,7 @@ async function rateLimitedFetch<T>(items: T[], fetchFn: (item: T) => Promise<any
     return results;
   }  
 
-export async function fetchAndStoreWebsites(userId: number): Promise<void> {
+  export async function fetchAndStoreWebsites(userId: number): Promise<void> {
     try {
       const sites = await searchconsole.sites.list();
       const { websites: existingWebsites } = await getWebsitesByUserId(userId);
@@ -33,33 +33,53 @@ export async function fetchAndStoreWebsites(userId: number): Promise<void> {
       const updatedWebsites = new Set<string>();
   
       if (sites.data.siteEntry) {
-        for (const site of sites.data.siteEntry) {
-          const domain = site.siteUrl || '';
-          const existingWebsite = existingWebsites.find(w => w.domain === domain);
+        // Process sites in batches to avoid rate limits
+        const batchSize = 5; // Process 5 sites at a time
+        for (let i = 0; i < sites.data.siteEntry.length; i += batchSize) {
+          const batch = sites.data.siteEntry.slice(i, i + batchSize);
+          
+          // Process batch with rate limiting
+          await Promise.all(
+            batch.map(async (site) => {
+              const domain = site.siteUrl || '';
+              if (!domain) return;
+              
+              // Check ownership status
+              const isOwner = await verifyWebsiteOwnership(domain);
+              const existingWebsite = existingWebsites.find(w => w.domain === domain);
   
-          if (existingWebsite) {
-            await updateWebsite(existingWebsite.id, {
-              enabled: existingWebsite.enabled,
-              auto_indexing_enabled: existingWebsite.auto_indexing_enabled,
-            });
-          } else if (domain) { 
-            await createWebsite({
-              user_id: userId,
-              domain: domain,
-              enabled: false,
-              auto_indexing_enabled: false,
-            });
-          }
+              if (existingWebsite) {
+                await updateWebsite(existingWebsite.id, {
+                  enabled: existingWebsite.enabled,
+                  auto_indexing_enabled: existingWebsite.auto_indexing_enabled,
+                  is_owner: isOwner,
+                });
+              } else if (domain) { 
+                await createWebsite({
+                  user_id: userId,
+                  domain: domain,
+                  enabled: false,
+                  auto_indexing_enabled: false,
+                  is_owner: isOwner,
+                });
+              }
   
-          if (domain) {
-            updatedWebsites.add(domain);
-          }
+              updatedWebsites.add(domain);
+              
+              // Add small delay between ownership checks to respect rate limits
+              await new Promise(resolve => setTimeout(resolve, 200));
+            })
+          );
         }
       }
   
+      // Disable websites that are no longer in GSC or where user lost ownership
       for (const existingWebsite of existingWebsites) {
         if (!updatedWebsites.has(existingWebsite.domain)) {
-          await updateWebsite(existingWebsite.id, { enabled: false });
+          await updateWebsite(existingWebsite.id, { 
+            enabled: false,
+            is_owner: false // Set ownership to false if site is no longer in GSC
+          });
         }
       }
     } catch (error) {
