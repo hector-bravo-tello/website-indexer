@@ -104,7 +104,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
           target="_blank"
           rel="noopener noreferrer"
           fullWidth
-          sx={{ mb: 2 }}
+          sx={{ mb: 2, textTransform: 'none' }}
         >
           Open Google Search Console
         </Button>
@@ -117,7 +117,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
           onClick={onClose} 
           variant="contained"
           fullWidth={isMobile}
-          sx={{ mb: { xs: 1, sm: 0 } }}
+          sx={{ mb: { xs: 1, sm: 0 }, textTransform: 'none' }}
         >
           Close
         </Button>

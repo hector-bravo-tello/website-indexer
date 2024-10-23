@@ -110,6 +110,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
                                       sx={{ 
                                         color: 'white', 
                                         borderColor: 'white',
+                                        textTransform: 'none',
                                         '&:hover': {
                                           backgroundColor: 'white',
                                           color: theme.palette.primary.main,

@@ -135,6 +135,7 @@ const HomePage = () => {
                       px: { xs: 3, sm: 4 },
                       py: { xs: 1, sm: 1.5 },
                       fontSize: { xs: '0.9rem', sm: '1.1rem' },
+                      textTransform: 'none',
                       '&:hover': {
                         backgroundColor: 'white',
                         color: theme.palette.primary.main,
