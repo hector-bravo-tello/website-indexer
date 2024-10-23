@@ -159,12 +159,19 @@ const Dashboard: React.FC = () => {
 
   const handleToggleEnabled = async (websiteId: number, currentStatus: boolean) => {
     try {
+      // Find the current website to get its auto_indexing_enabled status
+      const currentWebsite = websites?.find(website => website.id === websiteId);
+      if (!currentWebsite) return;
+  
       const response = await fetch(`/api/websites/${websiteId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ enabled: !currentStatus }),
+        body: JSON.stringify({
+          enabled: !currentStatus,
+          auto_indexing_enabled: currentWebsite.auto_indexing_enabled
+        }),
       });
       if (!response.ok) {
         throw new Error('Failed to toggle indexing');
@@ -176,13 +183,13 @@ const Dashboard: React.FC = () => {
           website.id === websiteId ? { ...website, enabled: !currentStatus } : website
         ) || null
       );
-
+  
       if (data.initialScanTime) {
         setInitialScanTime(data.initialScanTime);
         setIsPolling(true);
         setPollingAttempts(0);
       }
-
+  
       setSnackbar({
         open: true,
         message: data.message,
@@ -193,15 +200,22 @@ const Dashboard: React.FC = () => {
       setError('Failed to update indexing status. Please try again later.');
     }
   };
-
+  
   const handleToggleAutoIndexing = async (websiteId: number, currentStatus: boolean) => {
     try {
+      // Find the current website to get its enabled status
+      const currentWebsite = websites?.find(website => website.id === websiteId);
+      if (!currentWebsite) return;
+  
       const response = await fetch(`/api/websites/${websiteId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ auto_indexing_enabled: !currentStatus }),
+        body: JSON.stringify({
+          enabled: currentWebsite.enabled,
+          auto_indexing_enabled: !currentStatus
+        }),
       });
       if (!response.ok) {
         throw new Error('Failed to toggle auto-indexing');
