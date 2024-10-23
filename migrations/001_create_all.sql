@@ -13,6 +13,7 @@ CREATE TABLE websites (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     domain VARCHAR(255) NOT NULL,
+    is_owner BOOLEAN DEFAULT NULL,
     last_sync TIMESTAMP WITH TIME ZONE,
     last_auto_index TIMESTAMP WITH TIME ZONE,
     enabled BOOLEAN DEFAULT false,
@@ -102,7 +103,7 @@ BEGIN
     FROM pages
     WHERE website_id = p_website_id
       AND (indexing_status IS NULL OR indexing_status <> 'Submitted and indexed')
-      AND (last_sitemap_check IS NULL OR last_sitemap_check < NOW() - INTERVAL '1 day')
+      AND (last_sitemap_check IS NULL OR last_sitemap_check < NOW() - INTERVAL '21 hours')
       AND NOT EXISTS (
           SELECT 1
           FROM indexing_job_details
@@ -175,45 +176,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create procedure to start a new indexing job
-CREATE OR REPLACE PROCEDURE start_indexing_job(
-    p_website_id INTEGER,
-    p_batch_size INTEGER
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_job_id INTEGER;
-    v_page RECORD;
-    v_total_pages INTEGER;
-BEGIN
-    -- Create a new indexing job
-    INSERT INTO indexing_jobs (website_id, status, started_at, total_pages, processed_pages)
-    VALUES (p_website_id, 'in_progress', CURRENT_TIMESTAMP, 0, 0)
-    RETURNING id INTO v_job_id;
-
-    -- Get pages for indexing
-    SELECT COUNT(*) INTO v_total_pages
-    FROM get_pages_for_indexing(p_website_id, p_batch_size);
-
-    -- Update total_pages in the indexing job
-    UPDATE indexing_jobs
-    SET total_pages = v_total_pages
-    WHERE id = v_job_id;
-
-    -- Create indexing job details for each page
-    FOR v_page IN SELECT * FROM get_pages_for_indexing(p_website_id, p_batch_size)
-    LOOP
-        INSERT INTO indexing_job_details (indexing_job_id, page_id, status, submitted_at)
-        VALUES (v_job_id, v_page.page_id, 'pending', CURRENT_TIMESTAMP);
-        
-        UPDATE pages
-        SET indexing_status = 'pending'
-        WHERE id = v_page.page_id;
-    END LOOP;
-END;
-$$;
-
 -- Create function to update indexing job detail status
 CREATE OR REPLACE FUNCTION update_indexing_job_detail_status(
     p_job_detail_id INTEGER,
@@ -259,7 +221,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create function to create email notification
 CREATE OR REPLACE FUNCTION get_indexing_stats(input_website_id INT)
 RETURNS TABLE (
     total_pages BIGINT,
@@ -280,5 +241,29 @@ BEGIN
     LEFT JOIN pages p ON w.id = p.website_id
     WHERE w.id = input_website_id
     GROUP BY w.id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_websites_for_auto_indexing()
+RETURNS TABLE (
+    id INTEGER,
+    user_id INTEGER,
+    domain VARCHAR,
+    enabled BOOLEAN,
+    auto_indexing_enabled BOOLEAN,
+    is_owner BOOLEAN,
+    last_sync TIMESTAMP WITH TIME ZONE,
+    last_auto_index TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT w.*
+    FROM websites w
+    WHERE w.enabled = true 
+    AND w.auto_indexing_enabled = true
+    AND w.is_owner = true
+    AND (w.last_auto_index IS NULL OR w.last_auto_index < NOW() - INTERVAL '21 hours');
 END;
 $$ LANGUAGE plpgsql;
