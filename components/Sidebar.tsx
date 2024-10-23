@@ -1,6 +1,4 @@
-'use client';
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Box, 
   Drawer, 
@@ -9,16 +7,14 @@ import {
   ListItemButton, 
   ListItemIcon, 
   ListItemText, 
-  IconButton, 
   CircularProgress, 
   useTheme, 
   useMediaQuery,
-  Tooltip
+  Tooltip,
 } from '@mui/material';
 import { 
   Dashboard as DashboardIcon, 
   Web as WebIcon, 
-  Close as CloseIcon,
   Settings as SettingsIcon,
   Help as HelpIcon
 } from '@mui/icons-material';
@@ -53,12 +49,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const pathname = usePathname();
 
-  useEffect(() => {
-    setMounted(true);
-    fetchWebsites();
-  }, []);
-
-  const fetchWebsites = async () => {
+  const fetchWebsites = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch('/api/websites');
@@ -72,6 +63,37 @@ const Sidebar: React.FC<SidebarProps> = ({
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
+    fetchWebsites();
+  }, [fetchWebsites]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (isMobile) return;
+    e.preventDefault();
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const newWidth = Math.min(
+        Math.max(MIN_SIDEBAR_WIDTH, e.clientX),
+        MAX_SIDEBAR_WIDTH
+      );
+      onSidebarResize(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = 'default';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   const extractDomainName = (domain: string): string => {
@@ -81,40 +103,12 @@ const Sidebar: React.FC<SidebarProps> = ({
       .replace(/^www\./, '');
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (isMobile) return;
-    e.preventDefault();
-    setIsResizing(true);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  };
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isResizing) return;
-    const newWidth = Math.min(
-      Math.max(MIN_SIDEBAR_WIDTH, e.clientX),
-      MAX_SIDEBAR_WIDTH
-    );
-    onSidebarResize(newWidth);
-  };
-
-  const handleMouseUp = () => {
-    setIsResizing(false);
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-  };
-
   const isLinkActive = (path: string): boolean => {
     if (path === '/dashboard') {
       return pathname === '/dashboard';
     }
     return pathname.startsWith(path);
   };
-
-  // Don't render until client-side
-  if (!mounted) {
-    return null;
-  }
 
   const drawerContent = (
     <Box 
@@ -123,9 +117,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         height: '100%', 
         display: 'flex', 
         flexDirection: 'column', 
-        position: 'relative', 
-        overflow: 'hidden',
+        position: 'relative',
         bgcolor: 'primary.dark',
+        color: 'white',
       }}
     >
       {/* Logo Section */}
@@ -134,19 +128,16 @@ const Sidebar: React.FC<SidebarProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: 2,
           height: '64px',
-          position: 'relative',
           borderBottom: '0px solid rgba(255, 255, 255, 0.1)',
+          px: 2,
         }}
       >
-        <Box 
-          component={Link} 
+        <Link 
           href="/dashboard"
-          sx={{ 
-            display: 'flex', 
+          style={{ 
+            display: 'flex',
             alignItems: 'center',
-            cursor: 'pointer',
             textDecoration: 'none'
           }}
         >
@@ -157,27 +148,28 @@ const Sidebar: React.FC<SidebarProps> = ({
             height={35} 
             priority 
           />
-        </Box>
-        {onClose && (
-          <IconButton 
-            onClick={onClose} 
-            sx={{ 
-              position: 'absolute', 
-              right: 8, 
-              display: { sm: 'none' },
-              color: 'white',
-              '&:hover': {
-                bgcolor: 'rgba(255, 255, 255, 0.1)',
-              },
-            }}
-          >
-            <CloseIcon />
-          </IconButton>
-        )}
+        </Link>
       </Box>
 
       {/* Main Navigation */}
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+      <Box sx={{ 
+        flex: 1, 
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        '&::-webkit-scrollbar': {
+          width: '8px',
+        },
+        '&::-webkit-scrollbar-track': {
+          backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        },
+        '&::-webkit-scrollbar-thumb': {
+          backgroundColor: 'rgba(255, 255, 255, 0.2)',
+          borderRadius: '4px',
+          '&:hover': {
+            backgroundColor: 'rgba(255, 255, 255, 0.3)',
+          },
+        },
+      }}>
         <List component="nav">
           <ListItem disablePadding>
             <ListItemButton
@@ -194,7 +186,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 },
               }}
             >
-              <ListItemIcon sx={{ color: 'white' }}>
+              <ListItemIcon sx={{ color: 'white', minWidth: 40 }}>
                 <DashboardIcon />
               </ListItemIcon>
               <ListItemText primary="Dashboard" />
@@ -209,13 +201,12 @@ const Sidebar: React.FC<SidebarProps> = ({
               <ListItemText 
                 primary="Auto-Indexed Websites" 
                 sx={{ 
-                  color: 'white',
                   '& .MuiListItemText-primary': {
-                    fontSize: '0.875rem',
-                    fontWeight: 500,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
                     textTransform: 'uppercase',
                     letterSpacing: '0.1em',
-                    opacity: 0.7,
+                    color: 'rgba(255, 255, 255, 0.7)',
                   },
                 }} 
               />
@@ -223,10 +214,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           }
         >
           {loading ? (
-            <ListItem>
-              <Box sx={{ display: 'flex', justifyContent: 'center', width: '100%', py: 2 }}>
-                <CircularProgress sx={{ color: 'white' }} size={24} />
-              </Box>
+            <ListItem sx={{ justifyContent: 'center', py: 2 }}>
+              <CircularProgress size={24} sx={{ color: 'white' }} />
             </ListItem>
           ) : websites.length > 0 ? (
             websites.map((website) => (
@@ -246,7 +235,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       },
                     }}
                   >
-                    <ListItemIcon sx={{ color: 'white' }}>
+                    <ListItemIcon sx={{ color: 'white', minWidth: 40 }}>
                       <WebIcon />
                     </ListItemIcon>
                     <ListItemText 
@@ -268,9 +257,8 @@ const Sidebar: React.FC<SidebarProps> = ({
               <ListItemText 
                 primary="No enabled websites" 
                 sx={{ 
-                  color: 'rgba(255, 255, 255, 0.7)',
                   textAlign: 'center',
-                  py: 2,
+                  color: 'rgba(255, 255, 255, 0.7)',
                 }} 
               />
             </ListItem>
@@ -278,25 +266,20 @@ const Sidebar: React.FC<SidebarProps> = ({
         </List>
       </Box>
 
-      {/* Bottom Section */}
+      {/* Bottom Navigation */}
       <List sx={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
         <ListItem disablePadding>
           <ListItemButton
             component={Link}
-            //href="/dashboard/settings"
             href="#"
-            selected={isLinkActive('/dashboard/settings')}
             sx={{
               color: 'white',
-              '&.Mui-selected': {
-                bgcolor: 'rgba(255, 255, 255, 0.1)',
-              },
               '&:hover': {
                 bgcolor: 'rgba(255, 255, 255, 0.15)',
               },
             }}
           >
-            <ListItemIcon sx={{ color: 'white' }}>
+            <ListItemIcon sx={{ color: 'white', minWidth: 40 }}>
               <SettingsIcon />
             </ListItemIcon>
             <ListItemText primary="Settings" />
@@ -305,20 +288,15 @@ const Sidebar: React.FC<SidebarProps> = ({
         <ListItem disablePadding>
           <ListItemButton
             component={Link}
-            //href="/dashboard/help"
             href="#"
-            selected={isLinkActive('/dashboard/help')}
             sx={{
               color: 'white',
-              '&.Mui-selected': {
-                bgcolor: 'rgba(255, 255, 255, 0.1)',
-              },
               '&:hover': {
                 bgcolor: 'rgba(255, 255, 255, 0.15)',
               },
             }}
           >
-            <ListItemIcon sx={{ color: 'white' }}>
+            <ListItemIcon sx={{ color: 'white', minWidth: 40 }}>
               <HelpIcon />
             </ListItemIcon>
             <ListItemText primary="Help" />
@@ -329,31 +307,34 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* Resizer */}
       {!isMobile && (
         <Box
+          onMouseDown={handleMouseDown}
           sx={{
-            width: '5px',
-            cursor: 'col-resize',
             position: 'absolute',
-            right: 0,
             top: 0,
-            height: '100%',
-            zIndex: 1000,
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            right: 0,
+            bottom: 0,
+            width: '4px',
+            cursor: 'col-resize',
+            backgroundColor: isResizing ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
             '&:hover': {
               backgroundColor: 'rgba(255, 255, 255, 0.2)',
             },
-            display: isResizing ? 'none' : 'block',
+            zIndex: theme.zIndex.drawer + 1,
           }}
-          onMouseDown={handleMouseDown}
         />
       )}
     </Box>
   );
 
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <Box 
       component="nav" 
       sx={{ 
-        width: { sm: isMobile ? MOBILE_SIDEBAR_WIDTH : sidebarWidth }, 
+        width: { sm: sidebarWidth }, 
         flexShrink: { sm: 0 } 
       }}
     >
@@ -365,11 +346,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         ModalProps={{ keepMounted: true }}
         sx={{
           display: { xs: 'block', sm: 'none' },
-          zIndex: (theme) => theme.zIndex.drawer + 2,
           '& .MuiDrawer-paper': { 
-            boxSizing: 'border-box', 
-            width: MOBILE_SIDEBAR_WIDTH, 
+            width: MOBILE_SIDEBAR_WIDTH,
             bgcolor: 'primary.dark',
+            border: 'none',
           },
         }}
       >
@@ -382,9 +362,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         sx={{
           display: { xs: 'none', sm: 'block' },
           '& .MuiDrawer-paper': { 
-            boxSizing: 'border-box', 
-            width: sidebarWidth, 
+            width: sidebarWidth,
             bgcolor: 'primary.dark',
+            border: 'none',
+            overflowX: 'hidden',
           },
         }}
         open
