@@ -1,6 +1,6 @@
 # Website Indexer App
 
-A Next.js application that helps website owners automate and manage Google Search Console indexing requests.
+The Website Indexer App is a web-based tool designed to streamline and automate the process of submitting web pages for indexing to Google Search Console. It provides more control and faster visibility of content for website owners and SEO professionals, overcoming the limitations of Google Search Console's daily indexing submission limits and lack of bulk submission features.
 
 **Author: Hector Bravo**
 
