@@ -47,8 +47,8 @@ GOOGLE_PRIVATE_KEY=your_service_account_private_key
 NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=your_nextauth_secret
 
-# API Keys
-DAILY_INDEXING_API_KEY=your_api_key_for_daily_indexing
+# Cron Secret
+CRON_SECRET=your_api_key_for_daily_indexing
 
 # Email Configuration
 EMAIL_HOST=your_smtp_host

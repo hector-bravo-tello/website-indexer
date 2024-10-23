@@ -1,12 +1,7 @@
 {
-    "crons": [
-        {
+    "crons": [{
         "path": "/api/websites/daily-indexing",
-        "schedule": "0 0 * * *",
-        "headers": {
-            "x-api-key": "@daily_indexing_api_key"
-        }
-        }
-    ]
+        "schedule": "0 0 * * *"
+    }]
 }
   

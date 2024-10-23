@@ -6,8 +6,8 @@ import CONFIG from '@/config';
 import jobQueue from '@/lib/jobQueue';
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
-  if (request.headers.get('x-api-key') !== CONFIG.apiKeys.dailyIndexing) {
-    throw new AuthorizationError('Invalid API key');
+  if (request.headers.get('Authorization') !== `Bearer ${CONFIG.Authorization.cronSecret}`) {
+    throw new AuthorizationError('Invalid Cron Secret');
   }
 
   console.log('Starting daily indexing job');

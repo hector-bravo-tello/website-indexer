@@ -22,8 +22,8 @@ const CONFIG = {
     url: process.env.NEXTAUTH_URL,
     secret: process.env.NEXTAUTH_SECRET,
   },
-  apiKeys: {
-    dailyIndexing: process.env.DAILY_INDEXING_API_KEY,
+  Authorization: {
+    cronSecret: process.env.CRON_SECRET,
   },
   email: {
     host: process.env.EMAIL_HOST,
