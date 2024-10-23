@@ -35,11 +35,7 @@ Create a `.env` file in the root directory with the following variables:
 
 ```env
 # Database
-DB_HOST=your_db_host
-DB_PORT=5432
-DB_NAME=your_db_name
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
+POSTGRES_URL=postgres://<user>:<password>@<host>?sslmode=require
 
 # Google OAuth
 GOOGLE_CLIENT_ID=your_google_client_id
@@ -68,7 +64,7 @@ Read GOOGLE-APIS.md for the instructions on getting the values for the Google AP
 ## Database Setup
 
 1. Create a PostgreSQL database
-2. Run the SQL schema from `database-schema.sql`
+2. Run the SQL schema from `migrations/001_create_all.sql`
 
 ## Installation
 
