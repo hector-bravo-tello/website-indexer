@@ -64,6 +64,9 @@ export default function RootLayout({ children }: RootLayoutProps) {
 
   return (
     <html lang="en">
+      <head>
+        <link rel="icon" href="/images/favicon.ico" />
+      </head>
       <body>
         <SessionProvider>
           <ThemeProvider theme={useTheme()}>
