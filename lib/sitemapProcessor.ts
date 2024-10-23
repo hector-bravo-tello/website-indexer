@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { Website, Page, IndexingStatus } from '@/types';
@@ -10,6 +10,7 @@ import {
 } from '@/models';
 import { fetchBulkIndexingStatus } from './googleSearchConsole';
 import { ValidationError } from '@/utils/errors';
+
 
 const parseXml = promisify(parseString);
 
@@ -154,11 +155,54 @@ export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: s
 // Function to fetch URL content (robots.txt, sitemap.xml, etc.)
 export async function fetchUrl(url: string): Promise<string> {
   try {
-    const response = await axios.get(url);
+    const response: AxiosResponse = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://websiteindexer.com)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br'
+      },
+      maxRedirects: 5,
+      timeout: 10000, // 10 seconds timeout
+      validateStatus: function (status) {
+        return status >= 200 && status < 500; // Don't reject if status is between 200 and 499
+      }
+    });
+
+    // Handle different response status codes
+    if (response.status === 403) {
+      throw new ValidationError(`Access forbidden to ${url}. The server may be blocking automated requests.`);
+    }
+
+    if (response.status === 404) {
+      throw new ValidationError(`URL not found: ${url}`);
+    }
+
+    if (response.status !== 200) {
+      throw new ValidationError(`Failed to fetch URL: ${url} (Status: ${response.status})`);
+    }
+
     return response.data;
-  } catch (error) {
-    console.error(`Error fetching URL ${url}:`, error);
-    throw new ValidationError(`Failed to fetch URL: ${url}`);
+  } catch (error: any) {
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      console.error(`Error response from ${url}:`, {
+        status: error.response.status,
+        headers: error.response.headers,
+      });
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error(`No response received from ${url}:`, error.request);
+    }
+    
+    // If it's already a ValidationError, rethrow it
+    if (error instanceof ValidationError) {
+      throw error;
+    }
+
+    // Otherwise, wrap it in a ValidationError with a friendly message
+    throw new ValidationError(`Failed to fetch URL: ${url}. Please ensure the URL is accessible and try again.`);
   }
 }
 

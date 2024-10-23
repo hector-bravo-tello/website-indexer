@@ -14,6 +14,7 @@
     "@google-analytics/data": "^4.8.0",
     "@mui/icons-material": "^6.1.1",
     "@mui/material": "^6.1.1",
+    "@types/axios": "^0.14.4",
     "@types/jsdom": "^21.1.7",
     "@types/xml2js": "^0.4.14",
     "async-queue": "^0.1.0",
