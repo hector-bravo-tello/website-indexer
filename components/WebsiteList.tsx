@@ -1,6 +1,6 @@
 // components/WebsiteList.tsx
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   List, 
   ListItem, 
@@ -28,10 +28,20 @@ const WebsiteList: React.FC<WebsiteListProps> = ({
   onRefresh,
   loading = false 
 }) => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const formatLastScanned = (date: Date | null): string => {
     return date ? formatDateToLocal(date) : 'Never';
   };
 
+  if (!mounted) {
+    return null;
+  }
+  
   return (
     <>
       <Button

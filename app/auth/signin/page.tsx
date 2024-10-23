@@ -18,7 +18,7 @@ export default function LoginPage() {
       <Box sx={{ 
         flex: isMobile ? 'none' : 1, 
         position: 'relative',
-        height: isMobile ? '30vh' : '100vh',
+        height: isMobile ? '40vh' : '100vh',
       }}>
         <Image
           src="/images/background.webp"
@@ -37,7 +37,7 @@ export default function LoginPage() {
         justifyContent: 'center', 
         alignItems: 'center', 
         p: 4,
-        height: isMobile ? '70vh' : '100vh',
+        height: isMobile ? '40vh' : '100vh',
       }}>
         <Typography variant="h4" component="h1" gutterBottom align="center">
           Website Indexer

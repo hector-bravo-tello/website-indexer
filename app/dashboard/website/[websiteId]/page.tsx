@@ -375,8 +375,22 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
             startIcon={syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
             onClick={handleSyncPages}
             disabled={syncing || isPolling}
+            sx={{
+              textTransform: 'none',
+              borderColor: 'success.main',
+              color: 'success.main',
+              '&:hover': {
+                backgroundColor: 'success.main',
+                color: 'white',
+                borderColor: 'success.main',
+              },
+              '&.Mui-disabled': {
+                borderColor: 'action.disabled',
+                color: 'action.disabled',
+              }
+            }}
           >
-            {syncing ? 'Syncing...' : isPolling ? 'Sync in progress...' : 'Sync Pages'}
+            {syncing ? 'Syncing...' : isPolling ? 'Sync in Progress...' : 'Sync Pages'}
           </Button>
         </Grid>
       </Grid>

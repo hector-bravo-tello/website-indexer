@@ -37,6 +37,7 @@ import { useError } from '@/lib/useError';
 import { formatDateToLocal } from '@/utils/dateFormatter';
 
 const Dashboard: React.FC = () => {
+  const [mounted, setMounted] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [websites, setWebsites] = useState<Website[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,6 +133,10 @@ const Dashboard: React.FC = () => {
       setError('Failed to check sync status. Please try again later.');
     }
   }, [initialScanTime, fetchWebsites, pollingAttempts, setError]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
@@ -345,6 +350,11 @@ const Dashboard: React.FC = () => {
     );
   }
 
+  // Don't render anything until the component is mounted
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <Container sx={{ mt: 4 }}>
       <Grid container spacing={3} alignItems="center" sx={{ mb: 3 }}>
@@ -358,16 +368,40 @@ const Dashboard: React.FC = () => {
             startIcon={<InfoIcon />}
             onClick={() => setModalOpen(true)}
             variant="outlined"
-            color="secondary"
-            sx={{ mr: { xs: 0, sm: 2 }, mb: { xs: 1, sm: 0 } }}
+            sx={{ 
+              mr: { xs: 0, sm: 2 }, 
+              mb: { xs: 1, sm: 0 },
+              borderColor: 'primary.main',
+              color: 'primary.main',
+              textTransform: 'none',
+              '&:hover': {
+                backgroundColor: 'primary.main',
+                color: 'white',
+                borderColor: 'primary.main',
+              }
+            }}
           >
-            How to Enable Auto-indexing
+            How to Enable Auto-Indexing
           </Button>
           <Button
             startIcon={<RefreshIcon />}
             onClick={handleRefresh}
             variant="outlined"
             disabled={isPolling}
+            sx={{
+              borderColor: 'success.main',
+              color: 'success.main',
+              textTransform: 'none',
+              '&:hover': {
+                backgroundColor: 'success.main',
+                color: 'white',
+                borderColor: 'success.main',
+              },
+              '&.Mui-disabled': {
+                borderColor: 'action.disabled',
+                color: 'action.disabled',
+              }
+            }}
           >
             {isPolling ? 'Syncing...' : 'Refresh from Google Search Console'}
           </Button>
@@ -384,7 +418,7 @@ const Dashboard: React.FC = () => {
                   <CardContent>
                     <Typography variant="subtitle1" sx={{ mb: 1, wordBreak: 'break-all' }}>
                       {website.enabled ? (
-                        <Link href={`/website/${website.id}`} passHref>
+                        <Link href={`/dashboard/website/${website.id}`} passHref>
                           <Typography
                             component="a"
                             sx={{
@@ -478,7 +512,7 @@ const Dashboard: React.FC = () => {
                     <TableRow key={website.id}>
                       <TableCell>
                         {website.enabled ? (
-                          <Link href={`/website/${website.id}`} passHref>
+                          <Link href={`/dashboard/website/${website.id}`} passHref>
                             <Typography 
                               component="a" 
                               sx={{ 

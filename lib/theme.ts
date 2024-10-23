@@ -17,15 +17,15 @@ declare module '@mui/material/styles' {
 const baseTheme = createTheme({
   palette: {
     primary: {
-      main: '#0f766e',
-      light: '#14b8a6',
-      dark: '#0d5b54',
+      main: '#4DAEF7',
+      light: '#7CC6FE',
+      dark: '#2B68F2',
       contrastText: '#ffffff',
     },
     secondary: {
-      main: '#0ea5e9',
-      light: '#38bdf8',
-      dark: '#0284c7',
+      main: '#0f766e',
+      light: '#14b8a6',
+      dark: '#0d5b54',
       contrastText: '#ffffff',
     },
     error: {

@@ -83,13 +83,13 @@ const IndexingStats: React.FC<IndexingStatsProps> = ({ websiteId, refreshTrigger
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
           <Typography variant="subtitle1" color="textSecondary">Last Sync</Typography>
-          <Typography variant="h6">
+          <Typography variant="caption">
             {formatDateToLocal(indexingStats.last_sync)}
           </Typography>
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
           <Typography variant="subtitle1" color="textSecondary">Last Auto-Index</Typography>
-          <Typography variant="h6">
+          <Typography variant="caption">
             {formatDateToLocal(indexingStats.last_auto_index)}
           </Typography>
         </Grid>
