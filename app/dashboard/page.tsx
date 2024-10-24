@@ -37,6 +37,7 @@ import { useError } from '@/lib/useError';
 import { formatDateToLocal } from '@/utils/dateFormatter';
 
 const Dashboard: React.FC = () => {
+  // State declarations
   const [mounted, setMounted] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [websites, setWebsites] = useState<Website[] | null>(null);
@@ -55,11 +56,13 @@ const Dashboard: React.FC = () => {
   const [isPolling, setIsPolling] = useState(false);
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const MAX_POLLING_ATTEMPTS = 3;
-  
+
+  // Hooks
   const setError = useError();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  // Alert component
   const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
     props,
     ref,
@@ -67,6 +70,7 @@ const Dashboard: React.FC = () => {
     return <MuiAlert elevation={6} ref={ref} variant="filled" {...props} />;
   });
 
+  // Fetch functions
   const fetchServiceAccountEmail = useCallback(async () => {
     try {
       const response = await fetch('/api/sae');
@@ -98,42 +102,58 @@ const Dashboard: React.FC = () => {
     }
   }, [setError]);
 
+  // Status check function
   const checkJobStatus = useCallback(async () => {
-    if (!initialScanTime) return;
-  
+    if (!initialScanTime || !websites) return;
+
     try {
-      const response = await fetch(`/api/websites/status?initialScanTime=${initialScanTime}`);
-      if (!response.ok) {
-        throw new Error('Failed to check sync status');
-      }
-      const data = await response.json();
+      // Get all enabled websites to check their status
+      const enabledWebsites = websites.filter(w => w.enabled);
       
-      if (data.isCompleted) {
-        setIsPolling(false);
-        await fetchWebsites();
-        setSnackbar({
-          open: true,
-          message: 'Websites sync completed',
-          severity: 'success',
-        });
-      } else {
-        setPollingAttempts(prevAttempts => prevAttempts + 1);
-        if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
-          setIsPolling(false);
-          setSnackbar({
-            open: true,
-            message: 'Sync taking longer than expected. Please check back later.',
-            severity: 'error',
-          });
+      for (const website of enabledWebsites) {
+        const response = await fetch(`/api/websites/${website.id}/toggle?initialScanTime=${initialScanTime}`);
+        if (!response.ok) {
+          throw new Error('Failed to check sync status');
+        }
+        const data = await response.json();
+        
+        if (!data.isCompleted) {
+          // If any website is not completed, continue polling
+          return;
         }
       }
+
+      // If we get here, all websites are completed
+      setIsPolling(false);
+      await fetchWebsites();
+      setSnackbar({
+        open: true,
+        message: 'Websites sync completed',
+        severity: 'success',
+      });
+
     } catch (error) {
       console.error('Error checking sync status:', error);
       setIsPolling(false);
       setError('Failed to check sync status. Please try again later.');
     }
-  }, [initialScanTime, fetchWebsites, pollingAttempts, setError]);
 
+    // Increment polling attempts
+    setPollingAttempts(prev => {
+      const newAttempts = prev + 1;
+      if (newAttempts >= MAX_POLLING_ATTEMPTS) {
+        setIsPolling(false);
+        setSnackbar({
+          open: true,
+          message: 'Sync taking longer than expected. Please check back later.',
+          severity: 'error',
+        });
+      }
+      return newAttempts;
+    });
+  }, [initialScanTime, websites, fetchWebsites, setError]);
+  
+  // Effects
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -157,22 +177,20 @@ const Dashboard: React.FC = () => {
     fetchServiceAccountEmail();
   }, [fetchWebsites, fetchServiceAccountEmail]);
 
+  // Handler functions
   const handleToggleEnabled = async (websiteId: number, currentStatus: boolean) => {
     try {
-      // Find the current website to get its auto_indexing_enabled status
-      const currentWebsite = websites?.find(website => website.id === websiteId);
-      if (!currentWebsite) return;
-  
       const response = await fetch(`/api/websites/${websiteId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
+        body: JSON.stringify({ 
           enabled: !currentStatus,
-          auto_indexing_enabled: currentWebsite.auto_indexing_enabled
+          auto_indexing_enabled: currentStatus ? false : undefined
         }),
       });
+      
       if (!response.ok) {
         throw new Error('Failed to toggle indexing');
       }
@@ -180,16 +198,20 @@ const Dashboard: React.FC = () => {
       
       setWebsites(prevWebsites => 
         prevWebsites?.map(website => 
-          website.id === websiteId ? { ...website, enabled: !currentStatus } : website
+          website.id === websiteId ? { 
+            ...website, 
+            enabled: !currentStatus,
+            auto_indexing_enabled: currentStatus ? false : website.auto_indexing_enabled 
+          } : website
         ) || null
       );
-  
+
       if (data.initialScanTime) {
         setInitialScanTime(data.initialScanTime);
         setIsPolling(true);
         setPollingAttempts(0);
       }
-  
+
       setSnackbar({
         open: true,
         message: data.message,
@@ -200,32 +222,40 @@ const Dashboard: React.FC = () => {
       setError('Failed to update indexing status. Please try again later.');
     }
   };
-  
+
   const handleToggleAutoIndexing = async (websiteId: number, currentStatus: boolean) => {
     try {
-      // Find the current website to get its enabled status
-      const currentWebsite = websites?.find(website => website.id === websiteId);
-      if (!currentWebsite) return;
-  
+      // Find the current website
+      const website = websites?.find(w => w.id === websiteId);
+      if (!website) {
+        throw new Error('Website not found');
+      }
+
       const response = await fetch(`/api/websites/${websiteId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          enabled: currentWebsite.enabled,
+        body: JSON.stringify({ 
+          enabled: website.enabled,
           auto_indexing_enabled: !currentStatus
         }),
       });
+
       if (!response.ok) {
         throw new Error('Failed to toggle auto-indexing');
       }
       const data = await response.json();
+
       setWebsites(prevWebsites => 
         prevWebsites?.map(website => 
-          website.id === websiteId ? { ...website, auto_indexing_enabled: !currentStatus } : website
+          website.id === websiteId ? { 
+            ...website, 
+            auto_indexing_enabled: !currentStatus 
+          } : website
         ) || null
       );
+
       setSnackbar({
         open: true,
         message: data.message,
@@ -304,6 +334,7 @@ const Dashboard: React.FC = () => {
     setOrderBy(property);
   };
 
+  // Utility functions
   const extractDomain = (input: string): string => {
     if (!input) return 'Unknown Domain';
     let domain = input.replace(/^sc-domain:/, '');
@@ -316,6 +347,7 @@ const Dashboard: React.FC = () => {
     return date ? formatDateToLocal(date) : 'Never';
   };
 
+  // Memoized values
   const sortedWebsites = useMemo(() => {
     if (!websites) return [];
     return [...websites].sort((a, b) => {
@@ -356,6 +388,7 @@ const Dashboard: React.FC = () => {
     );
   };
 
+  // Loading state
   if (loading && !websites) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
@@ -364,11 +397,12 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  // Don't render anything until the component is mounted
+  // Not mounted state
   if (!mounted) {
     return null;
   }
 
+  // Main render
   return (
     <Container sx={{ mt: 4 }}>
       <Grid container spacing={3} alignItems="center" sx={{ mb: 3 }}>
@@ -458,7 +492,7 @@ const Dashboard: React.FC = () => {
                       />
                     </Typography>
                     <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                      Permissions:&nbsp; {renderOwnershipChip(website.is_owner)}
+                      Permissions: {renderOwnershipChip(website.is_owner)}
                       <Tooltip title="Refresh Permissions">
                         <IconButton onClick={() => handleVerifyOwnershipPermissions(website.id)} size="small">
                           <RefreshIcon fontSize="small" />
@@ -470,7 +504,7 @@ const Dashboard: React.FC = () => {
                       <Switch
                         checked={website.auto_indexing_enabled}
                         onChange={() => handleToggleAutoIndexing(website.id, website.auto_indexing_enabled)}
-                        disabled={!website.is_owner}
+                        disabled={!website.is_owner || !website.enabled}
                       />
                     </Typography>
                     <Typography variant="body2">
@@ -562,7 +596,7 @@ const Dashboard: React.FC = () => {
                         <Switch
                           checked={website.auto_indexing_enabled}
                           onChange={() => handleToggleAutoIndexing(website.id, website.auto_indexing_enabled)}
-                          disabled={!website.is_owner}
+                          disabled={!website.is_owner || !website.enabled}
                         />
                       </TableCell>
                       <TableCell>{formatLastScanned(website.last_sync)}</TableCell>

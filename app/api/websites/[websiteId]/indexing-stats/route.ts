@@ -21,6 +21,5 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const indexingStats = await getIndexingStatsByWebsiteId(websiteId);
-  console.log('Indexing Stat:', indexingStats);
   return NextResponse.json({ indexingStats });
 });
