@@ -19,7 +19,7 @@ const SITEMAP_VARIANTS = [
 ];
 
 const USER_AGENTS = [
-  'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://websiteindexer.com)',
+  'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://website-indexer.vercel.app)',
   'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 ];
