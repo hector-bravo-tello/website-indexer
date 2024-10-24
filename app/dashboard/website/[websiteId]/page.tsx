@@ -128,6 +128,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to fetch website details');
       }
       const websiteData = await websiteResponse.json();
+      //console.log('websiteData: ', websiteData);
       setWebsite(websiteData);
 
       const pagesResponse = await fetch(`/api/websites/${websiteId}/pages?all=true`);
@@ -135,8 +136,9 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to fetch pages');
       }
       const pagesData = await pagesResponse.json();
+      //console.log('pagesData: ', pagesData.totalCount || 0);
 
-      if (pagesData.length > 0) {
+      if (pagesData.totalCount > 0) {
         setAllPages(pagesData.pages || []);
 
         const urls = pagesData.pages.map((p: Page) => p.url);

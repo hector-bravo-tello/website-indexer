@@ -87,7 +87,8 @@ export async function processWebsiteForScheduledJob(website: Website): Promise<v
     }));
 
     // Update database with final indexing data
-    await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
+    const result = await addOrUpdatePagesFromSitemap(website.id, pagesToUpdate);
+    console.log(`Processed ${result.processedCount} pages for website ${website.id}`);
 
     // remove pages in database because were removed in sitemap
     if (removedUrls.length > 0) {

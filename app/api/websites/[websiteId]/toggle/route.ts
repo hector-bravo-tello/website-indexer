@@ -42,21 +42,21 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const { website: updatedWebsite } = await updateWebsite(websiteId, { enabled, auto_indexing_enabled });
 
   let message: string = '';
-  let shouldRunJob: boolean = false;
+  //let shouldRunJob: boolean = false;
 
   if (enabled) {
-    message = auto_indexing_enabled ? 'Website enabled. Auto-indexing enabled.' : 'Website enabled. Auto-indexing disabled.';
-    shouldRunJob = !website.last_sync || new Date(website.last_sync).getTime() < Date.now() - 1 * 60 * 60 * 1000;
+    message = auto_indexing_enabled ? 'Website enabled. Auto-indexing enabled. ' : 'Website enabled. Auto-indexing disabled. ';
+    //shouldRunJob = !website.last_sync || new Date(website.last_sync).getTime() < Date.now() - 1 * 60 * 60 * 1000;
 
-    if (shouldRunJob) {
+    //if (shouldRunJob) {
       try {
         await jobQueue.addJob(websiteId, 'ui');
-        message = 'Fetching data from Google Search Console...';
+        message += 'Fetching data from Google Search Console...';
 
       } catch (error) {
         console.error(`Failed to fetch data for website ${websiteId}:`, error);
       }
-    }
+    //}
   } else {  
     message = 'Website disabled.';
   }

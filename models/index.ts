@@ -2,7 +2,7 @@
 
 import pool from '@/lib/db';
 import { User, Website, Page, IndexingJob, IndexingJobDetail, IndexingStatus, IndexingStatsData, EmailNotification } from '@/types';
-import { DatabaseError } from '@/utils/errors';
+import { DatabaseError, ValidationError } from '@/utils/errors';
 
 // Helper function to handle database errors
 function handleDatabaseError(error: any): never {
@@ -253,15 +253,43 @@ export async function updatePageData(websiteId: number, url: string, indexingSta
   }
 }
 
-export async function addOrUpdatePagesFromSitemap(websiteId: number, pages: { url: string, lastCrawledDate?: string | null, lastSubmittedDate?: string | null, indexingStatus?: IndexingStatus }[]
-): Promise<{ statusCode: number }> {
+export async function addOrUpdatePagesFromSitemap(
+  websiteId: number, 
+  pages: { 
+    url: string, 
+    lastCrawledDate?: string | null, 
+    lastSubmittedDate?: string | null, 
+    indexingStatus?: IndexingStatus 
+  }[]
+): Promise<{ statusCode: number, processedCount: number }> {
   try {
-    const query = 'SELECT bulk_upsert_pages($1, $2)';
-    await pool.query(query, [websiteId, JSON.stringify(pages)]);
-    return { statusCode: 200 };
+    if (!Array.isArray(pages) || pages.length === 0) {
+      throw new ValidationError('No pages provided for update');
+    }
+
+    // Validate the input data
+    pages.forEach((page, index) => {
+      if (!page.url) {
+        throw new ValidationError(`Missing URL for page at index ${index}`);
+      }
+    });
+
+    const result = await pool.query('SELECT bulk_upsert_pages($1, $2::jsonb) as processed_count', [websiteId, JSON.stringify(pages)]);
+    //console.log('result: ', result);
+    const processedCount = result.rows[0]?.processed_count || 0;
+
+    if (processedCount === 0) {
+      console.log('No pages were processed during bulk upsert operation');
+    }
+
+    return { 
+      statusCode: 200, 
+      processedCount 
+    };
+
   } catch (error) {
     console.error('Error in addOrUpdatePagesFromSitemap:', error);
-    throw error;
+    handleDatabaseError(error);
   }
 }
 

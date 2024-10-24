@@ -48,16 +48,23 @@ export async function processSingleWebsite(website: Website): Promise<void> {
       // First try to get sitemaps from robots.txt
       const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
       const robotsTxtContent = await fetchUrl(robotsTxtUrl);
+      //console.log('robotsTxtContent: ', robotsTxtContent);
+
       sitemapUrls = extractSitemapUrls(robotsTxtContent);
+      //console.log('sitemapUrls: ', sitemapUrls);
+
     } catch (error) {
       console.log('Failed to fetch robots.txt, trying to find sitemap directly... ', error);
+
       // If robots.txt fails, try to find an accessible sitemap
       const sitemapUrl = await findAccessibleSitemap(cleanedDomain);
       sitemapUrls = [sitemapUrl];
+      //console.log('Error. sitemapUrls: ', sitemapUrls);
     }
 
     // Filter and process the sitemaps
     const filteredSitemapUrls = filterSitemaps(sitemapUrls);
+    //console.log('filteredSitemapUrls: ', filteredSitemapUrls);
     
     if (filteredSitemapUrls.length === 0) {
       throw new ValidationError('No valid sitemaps found');
@@ -143,8 +150,11 @@ async function processSitemap(websiteId: number, sitemapUrl: string): Promise<nu
       };
     });
 
+    //console.log('formattedPages: ', formattedPages);
+
     // Update or add pages
-    await addOrUpdatePagesFromSitemap(websiteId, formattedPages);
+    const result = await addOrUpdatePagesFromSitemap(websiteId, formattedPages);
+    console.log(`Processed ${result.processedCount} pages for website ${websiteId}`);
 
     // Remove pages that are no longer in the sitemap
     if (pagesToRemove.length > 0) {
@@ -163,15 +173,18 @@ async function processSitemap(websiteId: number, sitemapUrl: string): Promise<nu
 export async function parseSitemap(sitemapContent: string): Promise<Pick<Page, 'url'>[]> {
   try {
     const result: any = await parseXml(sitemapContent);
+
     if (result.sitemapindex) {
       // Sitemap index file containing multiple sitemaps
       const sitemapUrls = result.sitemapindex.sitemap.map((sitemap: any) => sitemap.loc[0]);
       const filteredSitemapUrls = filterSitemaps(sitemapUrls);
       const allPages = await Promise.all(filteredSitemapUrls.map(fetchAndParseSitemap));
       return allPages.flat();
+
     } else if (result.urlset) {
       // Regular sitemap containing URLs
       return result.urlset.url.map((url: any) => ({ url: url.loc[0] }));
+
     } else {
       throw new ValidationError('Invalid sitemap format');
     }
@@ -273,6 +286,7 @@ export function extractSitemapUrls(robotsTxtContent: string): string[] {
     }
 
     return sitemapUrls;
+
   } catch (error) {
     console.log(error);
     // If parsing fails, assume robotsTxtContent is the base URL
