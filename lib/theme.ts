@@ -116,12 +116,12 @@ const baseTheme = createTheme({
       lineHeight: 1.2,
     },
     subtitle1: {
-      fontSize: '1rem',
+      fontSize: '1.5rem',
       fontWeight: 400,
       lineHeight: 1.5,
     },
     subtitle2: {
-      fontSize: '0.875rem',
+      fontSize: '1rem',
       fontWeight: 500,
       lineHeight: 1.57,
     },

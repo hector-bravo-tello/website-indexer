@@ -489,7 +489,7 @@ const Dashboard: React.FC = () => {
                       />
                     </Typography>
                     <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                      Permissions: {renderOwnershipChip(website.is_owner)}
+                      Permissions:&nbsp;&nbsp;{renderOwnershipChip(website.is_owner)}
                       <Tooltip title="Refresh Permissions">
                         <IconButton onClick={() => handleVerifyOwnershipPermissions(website.id)} size="small">
                           <RefreshIcon fontSize="small" />
