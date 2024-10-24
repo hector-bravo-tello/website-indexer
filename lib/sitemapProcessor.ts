@@ -11,6 +11,18 @@ import {
 import { fetchBulkIndexingStatus } from './googleSearchConsole';
 import { ValidationError } from '@/utils/errors';
 
+const SITEMAP_VARIANTS = [
+  '/sitemap_index.xml',
+  '/sitemap.xml',
+  '/wp-sitemap.xml',
+  '/sitemap/sitemap-index.xml'
+];
+
+const USER_AGENTS = [
+  'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://websiteindexer.com)',
+  'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
 
 const parseXml = promisify(parseString);
 
@@ -30,22 +42,45 @@ export function cleanDomain(inputDomain: string): string {
 export async function processSingleWebsite(website: Website): Promise<void> {
   try {
     const cleanedDomain = cleanDomain(website.domain);
-    const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
-    const robotsTxtContent = await fetchUrl(robotsTxtUrl);
-    const allSitemapUrls = extractSitemapUrls(robotsTxtContent);
-    const filteredSitemapUrls = filterSitemaps(allSitemapUrls);
+    let sitemapUrls: string[] = [];
+
+    try {
+      // First try to get sitemaps from robots.txt
+      const robotsTxtUrl = `https://${cleanedDomain}/robots.txt`;
+      const robotsTxtContent = await fetchUrl(robotsTxtUrl);
+      sitemapUrls = extractSitemapUrls(robotsTxtContent);
+    } catch (error) {
+      console.log('Failed to fetch robots.txt, trying to find sitemap directly... ', error);
+      // If robots.txt fails, try to find an accessible sitemap
+      const sitemapUrl = await findAccessibleSitemap(cleanedDomain);
+      sitemapUrls = [sitemapUrl];
+    }
+
+    // Filter and process the sitemaps
+    const filteredSitemapUrls = filterSitemaps(sitemapUrls);
+    
+    if (filteredSitemapUrls.length === 0) {
+      throw new ValidationError('No valid sitemaps found');
+    }
 
     let totalPages = 0;
     for (const sitemapUrl of filteredSitemapUrls) {
-      const pageCount = await processSitemap(website.id, sitemapUrl);
-      totalPages += pageCount;
+      try {
+        const pageCount = await processSitemap(website.id, sitemapUrl);
+        totalPages += pageCount;
+      } catch (error) {
+        console.error(`Error processing sitemap ${sitemapUrl}:`, error);
+        // Continue with other sitemaps even if one fails
+        continue;
+      }
     }
 
     console.log(`Processed ${totalPages} pages for ${cleanedDomain}`);
-    // Update only last_sync timestamp for manual sync
     await updateWebsiteTimestamps(website.id, true, false);
+
   } catch (error) {
-    console.error(`Error processing website ${cleanDomain(website.domain)}:`, error);
+    console.error(`Error processing website ${website.domain}:`, error);
+    throw error;
   }
 }
 
@@ -154,62 +189,119 @@ export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: s
 
 // Function to fetch URL content (robots.txt, sitemap.xml, etc.)
 export async function fetchUrl(url: string): Promise<string> {
-  try {
-    const response: AxiosResponse = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://websiteindexer.com)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br'
-      },
-      maxRedirects: 5,
-      timeout: 10000, // 10 seconds timeout
-      validateStatus: function (status) {
-        return status >= 200 && status < 500; // Don't reject if status is between 200 and 499
-      }
-    });
-
-    // Handle different response status codes
-    if (response.status === 403) {
-      throw new ValidationError(`Access forbidden to ${url}. The server may be blocking automated requests.`);
-    }
-
-    if (response.status === 404) {
-      throw new ValidationError(`URL not found: ${url}`);
-    }
-
-    if (response.status !== 200) {
-      throw new ValidationError(`Failed to fetch URL: ${url} (Status: ${response.status})`);
-    }
-
-    return response.data;
-  } catch (error: any) {
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      console.error(`Error response from ${url}:`, {
-        status: error.response.status,
-        headers: error.response.headers,
+  const errors: Error[] = [];
+  
+  // Try different user agents
+  for (const userAgent of USER_AGENTS) {
+    try {
+      const response: AxiosResponse = await axios.get(url, {
+        headers: {
+          'User-Agent': userAgent,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        maxRedirects: 5,
+        timeout: 3000, // 3 seconds timeout
+        validateStatus: (status) => status >= 200 && status < 500
       });
-    } else if (error.request) {
-      // The request was made but no response was received
-      console.error(`No response received from ${url}:`, error.request);
-    }
-    
-    // If it's already a ValidationError, rethrow it
-    if (error instanceof ValidationError) {
-      throw error;
-    }
 
-    // Otherwise, wrap it in a ValidationError with a friendly message
-    throw new ValidationError(`Failed to fetch URL: ${url}. Please ensure the URL is accessible and try again.`);
+      if (response.status === 200) {
+        return response.data;
+      }
+      
+      errors.push(new Error(`Status ${response.status} with user agent ${userAgent}`));
+    } catch (error: any) {
+      errors.push(error);
+      continue; // Try next user agent
+    }
   }
+
+  // If the URL was a sitemap variant, try other variants
+  if (url.includes('sitemap')) {
+    const baseUrl = url.split('/')[0] + '//' + url.split('/')[2];
+    
+    for (const variant of SITEMAP_VARIANTS) {
+      const variantUrl = baseUrl + variant;
+      if (variantUrl === url) continue; // Skip if it's the same as the original URL
+      
+      try {
+        const response = await axios.get(variantUrl, {
+          headers: {
+            'User-Agent': USER_AGENTS[0],
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+          maxRedirects: 5,
+          timeout: 3000
+        });
+
+        if (response.status === 200) {
+          return response.data;
+        }
+      } catch (error) {
+        errors.push(error as Error);
+        continue;
+      }
+    }
+  }
+
+  // If we get here, all attempts failed
+  console.error('All fetch attempts failed for URL:', url);
+  console.error('Errors encountered:', errors);
+
+  throw new ValidationError(
+    `Unable to access the sitemap. Please ensure your robots.txt and sitemap are publicly accessible. ` +
+    `You may need to temporarily disable any bot protection or firewall rules.`
+  );
 }
 
 // Function to extract sitemap URLs from robots.txt
 export function extractSitemapUrls(robotsTxtContent: string): string[] {
-  const lines = robotsTxtContent.split('\n');
-  return lines
-    .filter(line => line.toLowerCase().startsWith('sitemap:'))
-    .map(line => line.split(': ')[1].trim());
+  try {
+    const lines = robotsTxtContent.split('\n');
+    const sitemapUrls = lines
+      .filter(line => line.toLowerCase().trim().startsWith('sitemap:'))
+      .map(line => line.split(': ')[1]?.trim())
+      .filter(Boolean);
+
+    // If no sitemaps found in robots.txt, return default sitemap URL
+    if (sitemapUrls.length === 0) {
+      const parsedUrl = new URL(robotsTxtContent);
+      return [`${parsedUrl.protocol}//${parsedUrl.host}/sitemap.xml`];
+    }
+
+    return sitemapUrls;
+  } catch (error) {
+    console.log(error);
+    // If parsing fails, assume robotsTxtContent is the base URL
+    try {
+      // Check if it's a valid URL
+      new URL(robotsTxtContent);
+      return [`${robotsTxtContent}/sitemap.xml`];
+    } catch(error) {
+      throw new ValidationError(`Invalid robots.txt content or URL format: ${error}`);
+    }
+  }
+}
+
+export async function findAccessibleSitemap(domain: string): Promise<string> {
+  const baseUrl = domain.startsWith('http') ? domain : `https://${domain}`;
+  
+  for (const variant of SITEMAP_VARIANTS) {
+    try {
+      const sitemapUrl = `${baseUrl}${variant}`;
+      const response = await axios.head(sitemapUrl);
+      
+      if (response.status === 200) {
+        return sitemapUrl;
+      }
+    } catch (error) {
+      console.log(error);
+      continue;
+    }
+  }
+
+  throw new ValidationError('No accessible sitemap found');
 }

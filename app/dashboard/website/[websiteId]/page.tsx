@@ -135,21 +135,24 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
         throw new Error('Failed to fetch pages');
       }
       const pagesData = await pagesResponse.json();
-      setAllPages(pagesData.pages || []);
 
-      const urls = pagesData.pages.map((p: Page) => p.url);
-      const metricsResponse = await fetch(`/api/websites/${websiteId}/metrics`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ urls }),
-      });
-      if (!metricsResponse.ok) {
-        throw new Error('Failed to fetch metrics data');
+      if (pagesData.length > 0) {
+        setAllPages(pagesData.pages || []);
+
+        const urls = pagesData.pages.map((p: Page) => p.url);
+        const metricsResponse = await fetch(`/api/websites/${websiteId}/metrics`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ urls }),
+        });
+        if (!metricsResponse.ok) {
+          throw new Error('Failed to fetch metrics data');
+        }
+        const metricsData = await metricsResponse.json();
+        setmetricsData(metricsData.data);
       }
-      const metricsData = await metricsResponse.json();
-      setmetricsData(metricsData.data);
 
     } catch (err) {
       console.error('Error fetching website details:', err);
