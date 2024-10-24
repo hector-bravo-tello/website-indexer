@@ -5,7 +5,7 @@ import { AuthorizationError } from '@/utils/errors';
 import CONFIG from '@/config';
 import jobQueue from '@/lib/jobQueue';
 
-export const POST = withErrorHandling(async (request: NextRequest) => {
+export const GET = withErrorHandling(async (request: NextRequest) => {
   if (request.headers.get('Authorization') !== `Bearer ${CONFIG.Authorization.cronSecret}`) {
     throw new AuthorizationError('Invalid Cron Secret');
   }
