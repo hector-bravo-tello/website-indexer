@@ -16,7 +16,6 @@ import {
   List,
   ListItem,
   ListItemText,
-  useTheme,
   useMediaQuery
 } from '@mui/material';
 import { ThemeProvider } from '@mui/material/styles';
@@ -69,7 +68,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       </head>
       <body>
         <SessionProvider>
-          <ThemeProvider theme={useTheme()}>
+          <ThemeProvider theme={theme}>
             <CssBaseline />
             <ErrorContext.Provider value={{ setError }}>
               <ErrorBoundary>
@@ -77,17 +76,23 @@ export default function RootLayout({ children }: RootLayoutProps) {
                   // Home page layout
                   <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
                     {/* Home Navigation */}
-                    <AppBar position="fixed">
+                    <AppBar position="fixed" sx={{ bgcolor: theme.palette.primary.dark }}>
                       <Container maxWidth="lg">
                         <Toolbar disableGutters sx={{ 
                           justifyContent: 'space-between',
                           minHeight: { xs: 56, sm: 64 } 
                         }}>
                           {isMobile && (
-                            <IconButton edge="start" color="inherit" aria-label="menu" onClick={toggleDrawer(true)}>
+                            <IconButton 
+                              edge="start" 
+                              aria-label="menu" 
+                              onClick={toggleDrawer(true)}
+                              sx={(theme) => ({ 
+                                color: theme.palette.primary.contrastText
+                              })}
+                            >
                               <MenuIcon />
-                            </IconButton>
-                          )}
+                            </IconButton>                          )}
                           <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'center' : 'left', alignItems: 'center' }}>
                             <Link href="/" passHref>
                               <Image

@@ -42,6 +42,7 @@ const Dashboard: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [websites, setWebsites] = useState<Website[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(false);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [orderBy, setOrderBy] = useState<keyof Website>('domain');
@@ -292,7 +293,7 @@ const Dashboard: React.FC = () => {
 
   const handleRefresh = async () => {
     try {
-      setLoading(true);
+      setRefresh(true);
       const response = await fetch('/api/websites/refresh', { method: 'POST' });
       if (!response.ok) {
         throw new Error('Failed to refresh websites');
@@ -300,22 +301,18 @@ const Dashboard: React.FC = () => {
       const data = await response.json();
       await fetchWebsites();
       
-      if (data.initialScanTime) {
-        setInitialScanTime(data.initialScanTime);
-        setIsPolling(true);
-        setPollingAttempts(0);
-      }
-
       setSnackbar({
         open: true,
         message: data.message,
         severity: 'success',
       });
+
     } catch (error) {
       console.error('Error refreshing websites:', error);
       setError('Failed to refresh websites. Please try again later.');
+
     } finally {
-      setLoading(false);
+      setRefresh(false);
     }
   };
 
@@ -451,7 +448,7 @@ const Dashboard: React.FC = () => {
               }
             }}
           >
-            {isPolling ? 'Syncing...' : 'Refresh from Google Search Console'}
+            {refresh ? 'Syncing...' : 'Refresh from Google Search Console'}
           </Button>
         </Grid>
       </Grid>

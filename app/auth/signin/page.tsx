@@ -63,7 +63,7 @@ export default function LoginPage() {
               '&:hover': {
                 boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
                 transform: 'translateY(-1px)',
-                bgcolor: 'primary.light',
+                bgcolor: 'primary.dark',
               },
               '&:active': {
                 transform: 'translateY(0)',
@@ -89,7 +89,7 @@ export default function LoginPage() {
                 '&:hover': {
                   transform: 'translateY(-1px)',
                   boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
-                  bgcolor: 'primary.light',
+                  bgcolor: 'primary.dark',
                   color: 'white',
                   borderColor: 'primary.main',
                 },
