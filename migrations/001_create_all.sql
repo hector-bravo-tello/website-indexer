@@ -103,7 +103,7 @@ BEGIN
     FROM pages
     WHERE website_id = p_website_id
       AND (indexing_status IS NULL OR indexing_status <> 'Submitted and indexed')
-      AND (last_sitemap_check IS NULL OR last_sitemap_check < NOW() - INTERVAL '21 hours')
+      AND (last_sitemap_check IS NULL OR last_sitemap_check < NOW() - INTERVAL '1 hour')
       AND NOT EXISTS (
           SELECT 1
           FROM indexing_job_details
@@ -264,6 +264,6 @@ BEGIN
     WHERE w.enabled = true 
     AND w.auto_indexing_enabled = true
     AND w.is_owner = true
-    AND (w.last_auto_index IS NULL OR w.last_auto_index < NOW() - INTERVAL '21 hours');
+    AND (w.last_auto_index IS NULL OR w.last_auto_index < NOW() - INTERVAL '1 hour');
 END;
 $$ LANGUAGE plpgsql;

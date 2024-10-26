@@ -11,20 +11,51 @@ import {
 import { fetchBulkIndexingStatus } from './googleSearchConsole';
 import { ValidationError } from '@/utils/errors';
 
+const parseXml = promisify(parseString);
+
+// Expanded list of user agents to try
+const USER_AGENTS = [
+  // Google/Googlebot agents
+  'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+  'Googlebot/2.1 (+http://www.google.com/bot.html)',
+  'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+  
+  // Modern browser agents
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+  
+  // Custom agent identifying our service
+  'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://website-indexer.vercel.app)',
+];
+
+// Common sitemap file patterns to try
 const SITEMAP_VARIANTS = [
   '/sitemap_index.xml',
   '/sitemap.xml',
   '/wp-sitemap.xml',
-  '/sitemap/sitemap-index.xml'
+  '/sitemap/sitemap-index.xml',
+  '/post-sitemap.xml',
+  '/page-sitemap.xml',
+  '/product-sitemap.xml',
+  '/category-sitemap.xml',
+  '/index-sitemap.xml'
 ];
 
-const USER_AGENTS = [
-  'Mozilla/5.0 (compatible; WebsiteIndexerBot/1.0; +https://website-indexer.vercel.app)',
-  'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-];
+// Enhanced browser-like headers that will be combined with different user agents
+const COMMON_HEADERS = {
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.5',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Connection': 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache'
+};
 
-const parseXml = promisify(parseString);
 
 export function cleanDomain(inputDomain: string): string {
   let cleanedDomain = inputDomain.replace(/^sc-domain:/, '');
@@ -200,73 +231,110 @@ export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: s
   return parseSitemap(sitemapContent);
 }
 
-// Function to fetch URL content (robots.txt, sitemap.xml, etc.)
+// Function to fetch URL with retry logic and multiple user agents
 export async function fetchUrl(url: string): Promise<string> {
   const errors: Error[] = [];
-  
-  // Try different user agents
+  let lastResponse: AxiosResponse | null = null;
+
+  // Try each user agent
   for (const userAgent of USER_AGENTS) {
+    const headers = {
+      ...COMMON_HEADERS,
+      'User-Agent': userAgent
+    };
+
     try {
-      const response: AxiosResponse = await axios.get(url, {
-        headers: {
-          'User-Agent': userAgent,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        },
+      // First attempt with this user agent
+      const response = await axios.get(url, {
+        headers,
         maxRedirects: 5,
-        timeout: 3000, // 3 seconds timeout
-        validateStatus: (status) => status >= 200 && status < 500
+        timeout: 10000,
+        validateStatus: (status) => status >= 200 && status < 500,
+        decompress: true
       });
 
       if (response.status === 200) {
         return response.data;
       }
-      
-      errors.push(new Error(`Status ${response.status} with user agent ${userAgent}`));
-    } catch (error: any) {
-      errors.push(error);
-      continue; // Try next user agent
+
+      lastResponse = response;
+
+      // If we get a protection response, try with cookies
+      if (response.status === 403 || response.status === 503) {
+        const cookies = response.headers['set-cookie'];
+        if (cookies) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+
+          const cookieHeader = cookies.map(cookie => cookie.split(';')[0]).join('; ');
+          const retryResponse = await axios.get(url, {
+            headers: {
+              ...headers,
+              'Cookie': cookieHeader
+            },
+            maxRedirects: 5,
+            timeout: 10000
+          });
+
+          if (retryResponse.status === 200) {
+            return retryResponse.data;
+          }
+          lastResponse = retryResponse;
+        }
+      }
+
+      // Add delay between different user agent attempts
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+    } catch (error) {
+      errors.push(error as Error);
+      continue;
     }
   }
 
-  // If the URL was a sitemap variant, try other variants
+  // If original URL failed, try alternate sitemap URLs
   if (url.includes('sitemap')) {
-    const baseUrl = url.split('/')[0] + '//' + url.split('/')[2];
+    const baseUrl = new URL(url).origin;
     
     for (const variant of SITEMAP_VARIANTS) {
-      const variantUrl = baseUrl + variant;
-      if (variantUrl === url) continue; // Skip if it's the same as the original URL
-      
-      try {
-        const response = await axios.get(variantUrl, {
-          headers: {
-            'User-Agent': USER_AGENTS[0],
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          },
-          maxRedirects: 5,
-          timeout: 3000
-        });
+      const variantUrl = `${baseUrl}${variant}`;
+      if (variantUrl === url) continue;
 
-        if (response.status === 200) {
-          return response.data;
+      // Try each user agent for the variant URL
+      for (const userAgent of USER_AGENTS) {
+        try {
+          const response = await axios.get(variantUrl, {
+            headers: {
+              ...COMMON_HEADERS,
+              'User-Agent': userAgent
+            },
+            maxRedirects: 5,
+            timeout: 10000
+          });
+
+          if (response.status === 200) {
+            return response.data;
+          }
+        } catch (error) {
+          console.log(error);
+          continue;
         }
-      } catch (error) {
-        errors.push(error as Error);
-        continue;
       }
     }
   }
 
-  // If we get here, all attempts failed
-  console.error('All fetch attempts failed for URL:', url);
-  console.error('Errors encountered:', errors);
+  // Determine protection type from last response
+  const protectionType = lastResponse?.headers?.server?.includes('cloudflare') ? 'Cloudflare' : 
+                        lastResponse?.data?.includes('wordfence') ? 'Wordfence' : 
+                        'WAF';
 
   throw new ValidationError(
-    `Unable to access the sitemap. Please ensure your robots.txt and sitemap are publicly accessible. ` +
-    `You may need to temporarily disable any bot protection or firewall rules.`
+    `Unable to access the sitemap. Site appears to be protected by ${protectionType}. ` +
+    `Status: ${lastResponse?.status || 'unknown'}. ` +
+    `You may need to: \n` +
+    `1. Whitelist our IPs in ${protectionType}\n` +
+    `2. Add exception for these User-Agents: ${USER_AGENTS[0]} or ${USER_AGENTS[USER_AGENTS.length - 1]}\n` +
+    `3. Ensure sitemap URLs are publicly accessible\n` +
+    `4. Temporarily lower security settings for sitemap URLs`
   );
 }
 
