@@ -305,7 +305,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     let intervalId: NodeJS.Timeout;
   
     if (isPolling && pollingAttempts < MAX_POLLING_ATTEMPTS) {
-      intervalId = setInterval(checkJobStatus, 5000); // Poll every 5 seconds
+      intervalId = setInterval(checkJobStatus, 10000); // Poll every 10 seconds
     } else if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
       setIsPolling(false);
     }
