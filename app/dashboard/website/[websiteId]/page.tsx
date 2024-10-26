@@ -81,7 +81,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
   const [initialScanTime, setInitialScanTime] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [pollingAttempts, setPollingAttempts] = useState(0);
-  const MAX_POLLING_ATTEMPTS = 3;
+  const MAX_POLLING_ATTEMPTS = 6;
   const [statsRefreshTrigger, setStatsRefreshTrigger] = useState(0);
 
   const setGlobalError = useError();
