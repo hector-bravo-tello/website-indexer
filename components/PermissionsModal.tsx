@@ -59,11 +59,11 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
       fullScreen={isMobile}
     >
       <DialogTitle sx={{ fontSize: { xs: '1.2rem', sm: '1.5rem' } }}>
-        Permissions needed for Auto-Indexing
+        Required Permissions in Google Search Console
       </DialogTitle>
       <DialogContent>
         <Typography paragraph>
-          To activate the service account, please add the following email to your Google Search Console users:
+          Please add the following email to your Google Search Console users, to activate the service account:
         </Typography>
         <Box sx={{ 
           my: 2, 

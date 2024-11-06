@@ -201,7 +201,7 @@ async function processSitemap(websiteId: number, sitemapUrl: string): Promise<nu
 }
 
 // Function to parse the sitemap XML and extract URLs
-export async function parseSitemap(sitemapContent: string): Promise<Pick<Page, 'url'>[]> {
+export async function parseSitemap(sitemapContent: string): Promise<Pick<Page, 'url' | 'last_modified'>[]> {
   try {
     const result: any = await parseXml(sitemapContent);
 
@@ -214,7 +214,10 @@ export async function parseSitemap(sitemapContent: string): Promise<Pick<Page, '
 
     } else if (result.urlset) {
       // Regular sitemap containing URLs
-      return result.urlset.url.map((url: any) => ({ url: url.loc[0] }));
+      return result.urlset.url.map((url: any) => ({
+        url: url.loc[0],
+        last_modified: url.lastmod ? new Date(url.lastmod[0]) : null
+      }));
 
     } else {
       throw new ValidationError('Invalid sitemap format');
@@ -226,7 +229,7 @@ export async function parseSitemap(sitemapContent: string): Promise<Pick<Page, '
 }
 
 // Helper function to fetch and parse a sitemap from a given URL
-export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string }[]> {
+export async function fetchAndParseSitemap(sitemapUrl: string): Promise<{ url: string; last_modified: Date | null; }[]> {
   const sitemapContent = await fetchUrl(sitemapUrl);
   return parseSitemap(sitemapContent);
 }
@@ -263,7 +266,7 @@ export async function fetchUrl(url: string): Promise<string> {
       if (response.status === 403 || response.status === 503) {
         const cookies = response.headers['set-cookie'];
         if (cookies) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
 
           const cookieHeader = cookies.map(cookie => cookie.split(';')[0]).join('; ');
           const retryResponse = await axios.get(url, {

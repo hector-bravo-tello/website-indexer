@@ -426,7 +426,7 @@ const Dashboard: React.FC = () => {
               }
             }}
           >
-            How to Enable Auto-Indexing
+            START HERE - GSC Permissions
           </Button>
           <Button
             startIcon={<RefreshIcon />}
@@ -505,7 +505,7 @@ const Dashboard: React.FC = () => {
                       />
                     </Typography>
                     <Typography variant="body2">
-                      Last Synced: {formatLastScanned(website.last_sync)}
+                      Last Sync: {formatLastScanned(website.last_sync)}
                     </Typography>
                     <Typography variant="body2">
                       Last Auto-Index: {formatLastScanned(website.last_auto_index)}
@@ -538,7 +538,7 @@ const Dashboard: React.FC = () => {
                         direction={orderBy === 'last_sync' ? order : 'asc'}
                         onClick={() => handleRequestSort('last_sync')}
                       >
-                        Last Synced
+                        Last Sync
                       </TableSortLabel>
                     </TableCell>
                     <TableCell>

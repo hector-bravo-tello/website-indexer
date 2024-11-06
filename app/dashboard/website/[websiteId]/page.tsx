@@ -23,6 +23,7 @@ import {
   Card,
   CardContent,
   Snackbar,
+  Tooltip
 } from '@mui/material';
 import MuiAlert, { AlertProps } from '@mui/material/Alert';
 import { SyncAlt as SyncIcon } from '@mui/icons-material';
@@ -44,6 +45,7 @@ interface HeadCell {
 const headCells: HeadCell[] = [
   { id: 'url', label: 'URL', numeric: false, sortable: true },
   { id: 'indexing_status', label: 'Status', numeric: false, sortable: true },
+  { id: 'last_modified', label: 'Last Modified', numeric: false, sortable: true },
   { id: 'impressions', label: 'Impressions', numeric: true, sortable: true },
   { id: 'clicks', label: 'Clicks', numeric: true, sortable: true },
   { id: 'last_crawled_date', label: 'Last Crawled', numeric: false, sortable: true },
@@ -99,6 +101,10 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     cleanedDomain = cleanedDomain.replace(/^www\./, '');
     return cleanedDomain;
   }
+
+  const formatLastModified = (date: Date | null): string => {
+    return date ? formatDateToLocal(date) : 'Not available';
+  };
 
   const formatLastCrawled = (date: Date | null): string => {
     return date ? formatDateToLocal(date) : 'Not crawled yet';
@@ -305,7 +311,7 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     let intervalId: NodeJS.Timeout;
   
     if (isPolling && pollingAttempts < MAX_POLLING_ATTEMPTS) {
-      intervalId = setInterval(checkJobStatus, 10000); // Poll every 10 seconds
+      intervalId = setInterval(checkJobStatus, 20000); // Poll every 20 seconds
     } else if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
       setIsPolling(false);
     }
@@ -331,11 +337,15 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
     const sortedPages = [...allPages].sort((a, b) => {
       const aValue = orderBy === 'impressions' || orderBy === 'clicks' 
         ? (metricsData[a.url]?.[orderBy] || 0) 
+        : orderBy === 'last_modified'
+        ? (a.last_modified ? new Date(a.last_modified).getTime() : 0)
         : a[orderBy as keyof Page];
       const bValue = orderBy === 'impressions' || orderBy === 'clicks'
         ? (metricsData[b.url]?.[orderBy] || 0)
+        : orderBy === 'last_modified'
+        ? (b.last_modified ? new Date(b.last_modified).getTime() : 0)
         : b[orderBy as keyof Page];
-
+  
       if (typeof aValue === 'string' && typeof bValue === 'string') {
         return order === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
       } else if (aValue instanceof Date && bValue instanceof Date) {
@@ -345,11 +355,11 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
       }
       return 0;
     });
-
+  
     const startIndex = page * rowsPerPage;
-    const endIndex = startIndex + rowsPerPage;
-    return sortedPages.slice(startIndex, endIndex);
+    return sortedPages.slice(startIndex, startIndex + rowsPerPage);
   }, [allPages, order, orderBy, metricsData, page, rowsPerPage]);
+
 
   if (loading && allPages.length === 0) {
     return (
@@ -375,28 +385,32 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
           </Typography>
         </Grid>
         <Grid item xs={12} sm={6} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button
-            variant="outlined"
-            startIcon={syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
-            onClick={handleSyncPages}
-            disabled={syncing || isPolling}
-            sx={{
-              textTransform: 'none',
+        <Button
+          variant="outlined"
+          startIcon={syncing || isPolling ? (
+            <CircularProgress size={20} color="inherit" />
+          ) : (
+            <SyncIcon />
+          )}
+          onClick={handleSyncPages}
+          disabled={syncing || isPolling}
+          sx={{
+            textTransform: 'none',
+            borderColor: 'success.main',
+            color: 'success.main',
+            '&:hover': {
+              backgroundColor: 'success.main',
+              color: 'white',
               borderColor: 'success.main',
-              color: 'success.main',
-              '&:hover': {
-                backgroundColor: 'success.main',
-                color: 'white',
-                borderColor: 'success.main',
-              },
-              '&.Mui-disabled': {
-                borderColor: 'action.disabled',
-                color: 'action.disabled',
-              }
-            }}
-          >
-            {syncing ? 'Syncing...' : isPolling ? 'Sync in Progress...' : 'Sync Pages'}
-          </Button>
+            },
+            '&.Mui-disabled': {
+              borderColor: 'action.disabled',
+              color: 'action.disabled',
+            }
+          }}
+        >
+          {syncing ? 'Sync in Progress' : isPolling ? 'Sync in Progress' : 'Sync Pages'}
+        </Button>
         </Grid>
       </Grid>
 
@@ -419,6 +433,9 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                     </Typography>
                     <Typography variant="body2">
                       Status: {page.indexing_status}
+                    </Typography>
+                    <Typography variant="body2">
+                      Last Modified: {formatLastModified(page.last_modified)}
                     </Typography>
                     <Typography variant="body2">
                       Impressions: {metricsData[page.url]?.impressions || 0}
@@ -485,18 +502,23 @@ export default function WebsiteDetailsPage({ params }: { params: { websiteId: st
                   {sortedAndPaginatedPages.map((page) => (
                     <TableRow key={page.id}>
                       <TableCell
-                        component="th"
-                        scope="row"
-                        sx={{
-                          maxWidth: 300,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {page.url}
+                      component="th"
+                      scope="row"
+                      sx={{
+                        maxWidth: 300,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                        <Tooltip title={page.url} arrow>
+                          <Box component="span" sx={{ cursor: 'pointer' }}>
+                            {page.url}
+                          </Box>
+                        </Tooltip>
                       </TableCell>
                       <TableCell>{page.indexing_status}</TableCell>
+                      <TableCell>{formatLastModified(page.last_modified)}</TableCell>
                       <TableCell align="right">{metricsData[page.url]?.impressions || 0}</TableCell>
                       <TableCell align="right">{metricsData[page.url]?.clicks || 0}</TableCell>
                       <TableCell>{formatLastCrawled(page.last_crawled_date)}</TableCell>
