@@ -1,5 +1,4 @@
-import { processSingleWebsite } from '@/lib/sitemapProcessor';
-import { processWebsiteForScheduledJob } from '@/lib/scheduledSitemapProcessor';
+import { processSingleWebsite, processWebsiteForScheduledJob } from '@/lib/sitemapProcessor';
 import { getWebsiteById } from '@/models';
 
 interface Job {

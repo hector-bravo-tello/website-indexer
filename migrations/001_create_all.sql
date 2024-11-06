@@ -27,7 +27,7 @@ CREATE TABLE pages (
     id SERIAL PRIMARY KEY,
     website_id INTEGER REFERENCES websites(id) ON DELETE CASCADE,
     url VARCHAR(2048) NOT NULL,
-    last_sitemap_check TIMESTAMP WITH TIME ZONE,
+    last_modified TIMESTAMP WITH TIME ZONE,
     last_crawled_date TIMESTAMP WITH TIME ZONE,
     last_submitted_date TIMESTAMP WITH TIME ZONE,
     indexing_status VARCHAR(50),
@@ -79,7 +79,6 @@ CREATE INDEX idx_websites_last_auto_index ON websites(last_auto_index);
 CREATE INDEX idx_pages_website_id ON pages(website_id);
 CREATE INDEX idx_pages_indexing_status ON pages(indexing_status);
 CREATE INDEX idx_website_indexing_status ON pages (website_id, indexing_status);
-CREATE INDEX idx_pages_last_sitemap_check ON pages(last_sitemap_check);
 CREATE INDEX idx_indexing_jobs_website_id ON indexing_jobs(website_id);
 CREATE INDEX idx_indexing_jobs_status ON indexing_jobs(status);
 CREATE INDEX idx_indexing_job_details_indexing_job_id ON indexing_job_details(indexing_job_id);
@@ -90,8 +89,7 @@ CREATE INDEX idx_email_notifications_website_id ON email_notifications(website_i
 
 -- Create function to get pages for indexing
 CREATE OR REPLACE FUNCTION get_pages_for_indexing(
-    p_website_id INTEGER,
-    p_limit INTEGER
+    p_website_id INTEGER
 )
 RETURNS TABLE (
     page_id INTEGER,
@@ -99,19 +97,18 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT id, url
-    FROM pages
-    WHERE website_id = p_website_id
-      AND (indexing_status IS NULL OR indexing_status <> 'Submitted and indexed')
-      AND (last_sitemap_check IS NULL OR last_sitemap_check < NOW() - INTERVAL '1 hour')
+    SELECT p.id, p.url
+    FROM pages p
+    JOIN websites w ON w.id = p.website_id
+    WHERE p.website_id = p_website_id
+      AND (p.indexing_status IS NULL OR p.indexing_status <> 'Submitted and indexed')
+      AND (w.last_sync IS NULL OR p.last_modified > w.last_sync)
       AND NOT EXISTS (
           SELECT 1
           FROM indexing_job_details
-          WHERE indexing_job_details.page_id = pages.id
+          WHERE indexing_job_details.page_id = p.id
             AND indexing_job_details.status = 'pending'
-      )
-    ORDER BY last_sitemap_check ASC NULLS FIRST, last_crawled_date ASC NULLS FIRST
-    LIMIT p_limit;
+      );
 END;
 $$ LANGUAGE plpgsql;
 
@@ -133,46 +130,54 @@ $$ LANGUAGE plpgsql;
 
 -- Add or update pages
 CREATE OR REPLACE FUNCTION bulk_upsert_pages(
-  p_website_id INT,
-  p_pages JSONB
-) RETURNS VOID AS $$
+    p_website_id INTEGER,
+    p_pages JSONB
+) RETURNS INTEGER AS $$
 DECLARE
-  v_page JSONB;
+    v_page JSONB;
+    v_count INTEGER := 0;
 BEGIN
-  FOR v_page IN SELECT * FROM jsonb_array_elements(p_pages)
-  LOOP
-    INSERT INTO pages (
-      website_id, 
-      url, 
-      last_crawled_date, 
-      indexing_status, 
-      last_sitemap_check,
-      last_submitted_date
-    ) VALUES (
-      p_website_id,
-      v_page->>'url',
-      (v_page->>'lastCrawledDate')::TIMESTAMP WITH TIME ZONE,
-      v_page->>'indexingStatus',
-      CURRENT_TIMESTAMP,
-      (v_page->>'lastSubmittedDate')::TIMESTAMP WITH TIME ZONE
-    )
-    ON CONFLICT (website_id, url) 
-    DO UPDATE SET 
-      last_crawled_date = COALESCE(
-        (v_page->>'lastCrawledDate')::TIMESTAMP WITH TIME ZONE,
-        pages.last_crawled_date
-      ),
-      indexing_status = COALESCE(
-        v_page->>'indexingStatus',
-        pages.indexing_status
-      ),
-      last_sitemap_check = CURRENT_TIMESTAMP,
-      updated_at = CURRENT_TIMESTAMP,
-      last_submitted_date = COALESCE(
-        (v_page->>'lastSubmittedDate')::TIMESTAMP WITH TIME ZONE,
-        pages.last_submitted_date
-      );
-  END LOOP;
+    FOR v_page IN SELECT * FROM jsonb_array_elements(p_pages)
+    LOOP
+        INSERT INTO pages (
+            website_id, 
+            url, 
+            last_crawled_date, 
+            indexing_status,
+            last_modified,
+            last_submitted_date
+        ) VALUES (
+            p_website_id,
+            v_page->>'url',
+            (v_page->>'lastCrawledDate')::TIMESTAMP WITH TIME ZONE,
+            v_page->>'indexingStatus',
+            (v_page->>'lastModified')::TIMESTAMP WITH TIME ZONE,
+            (v_page->>'lastSubmittedDate')::TIMESTAMP WITH TIME ZONE
+        )
+        ON CONFLICT (website_id, url) 
+        DO UPDATE SET 
+            last_crawled_date = COALESCE(
+                (v_page->>'lastCrawledDate')::TIMESTAMP WITH TIME ZONE,
+                pages.last_crawled_date
+            ),
+            indexing_status = COALESCE(
+                v_page->>'indexingStatus',
+                pages.indexing_status
+            ),
+            last_modified = COALESCE(
+                (v_page->>'lastModified')::TIMESTAMP WITH TIME ZONE,
+                pages.last_modified
+            ),
+            updated_at = CURRENT_TIMESTAMP,
+            last_submitted_date = COALESCE(
+                (v_page->>'lastSubmittedDate')::TIMESTAMP WITH TIME ZONE,
+                pages.last_submitted_date
+            );
+            
+        v_count := v_count + 1;
+    END LOOP;
+    
+    RETURN v_count;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -259,11 +264,21 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT w.*
+    SELECT 
+        w.id,
+        w.user_id,
+        w.domain,
+        w.enabled,
+        w.auto_indexing_enabled,
+        w.is_owner,
+        w.last_sync,
+        w.last_auto_index,
+        w.created_at,
+        w.updated_at
     FROM websites w
     WHERE w.enabled = true 
     AND w.auto_indexing_enabled = true
     AND w.is_owner = true
-    AND (w.last_auto_index IS NULL OR w.last_auto_index < NOW() - INTERVAL '1 hour');
+    AND (w.last_auto_index IS NULL OR w.last_auto_index < NOW() - INTERVAL '21 hours');
 END;
 $$ LANGUAGE plpgsql;

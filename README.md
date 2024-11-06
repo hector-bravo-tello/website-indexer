@@ -90,22 +90,22 @@ The app includes an automated daily indexing system that processes websites that
 
 1. Set up a cron job or scheduled task to trigger the daily indexing endpoint
 2. The endpoint is: `POST /api/websites/daily-indexing`
-3. Include the `x-api-key` header matching your `DAILY_INDEXING_API_KEY`
+3. Include the `Bearer Token` authorization matching your `CRON_SECRET`
 
 ### Example Cron Setup
 
 Using cURL in a cron job:
 
 ```bash
-0 0 * * * curl -X POST https://your-domain.com/api/websites/daily-indexing \
-  -H "x-api-key: your_daily_indexing_api_key"
+0 0 * * * curl -X GET https://your-domain.com/api/websites/daily-indexing \
+  -H "Authorization: Bearer CRON_SECRET"
 ```
 
 Using wget:
 
 ```bash
-0 0 * * * wget --header="x-api-key: your_daily_indexing_api_key" \
-  --post-data="" https://your-domain.com/api/websites/daily-indexing
+0 0 * * * wget --header="Authorization: Bearer CRON_SECRET" \
+  https://your-domain.com/api/websites/daily-indexing
 ```
 
 ### How Daily Indexing Works
@@ -132,14 +132,17 @@ Using wget:
 
 ## API Routes
 
-- `GET /api/websites`: List all websites
-- `POST /api/websites/refresh`: Refresh websites from Google Search Console
-- `GET /api/websites/:id`: Get website details
-- `POST /api/websites/:id/toggle`: Enable/disable website or auto-indexing
-- `GET /api/websites/:id/verify-ownership`: Verify GSC ownership
-- `GET /api/websites/:id/pages`: List website pages
-- `POST /api/websites/:id/pages/:pageId/submit-for-indexing`: Submit page for indexing
-- `POST /api/websites/daily-indexing`: Trigger daily indexing job
+- `GET /api/websites` - List all user's websites
+- `POST /api/websites/refresh` - Refresh websites from Google Search Console
+- `POST /api/websites/daily-indexing` - Trigger daily auto-indexing for enabled websites (Protected, requires Authorization: Bearer YOUR_CRON_SECRET header)
+- `GET /api/websites/:websiteId` - Get website details
+- `POST /api/websites/:websiteId/toggle` - Enable/disable website and auto-indexing
+- `GET /api/websites/:websiteId/verify-ownership` - Verify Google Search Console ownership
+- `GET /api/websites/:websiteId/indexing-stats` - Get website indexing statistics
+- `GET /api/websites/:websiteId/pages` - List website pages (Supports query params: all, page, pageSize, orderBy, order)
+- `POST /api/websites/:websiteId/pages/:pageId/submit-for-indexing` - Submit a page for indexing (24-hour cooldown between submissions)
+- `POST /api/websites/:websiteId/metrics` - Get page impressions and clicks from Google Search Console
+- `GET /api/sae` - Get service account email used for Google Search Console
 
 ## Security
 
